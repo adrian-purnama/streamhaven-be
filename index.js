@@ -24,6 +24,7 @@ const discoverRoutes = require('./routes/discover.route.js');
 const languagesRoutes = require('./routes/languages.route.js');
 const personRoutes = require('./routes/person.route.js');
 const supporterRoutes = require('./routes/supporter.route.js');
+const feedbackRoutes = require('./routes/data entry/feedback.route.js');
 
 // --------------- Security headers ---------------
 app.use(helmet({
@@ -148,6 +149,7 @@ app.use('/api/discover', discoverRoutes)
 app.use('/api/languages', languagesRoutes)
 app.use('/api/person', personRoutes)
 app.use('/api/supporters', supporterRoutes)
+app.use('/api/feedback', feedbackRoutes)
 
 app.listen(PORT, () => {
     console.log(`Server is running on port ${PORT}`);

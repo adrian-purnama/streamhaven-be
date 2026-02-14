@@ -256,24 +256,23 @@ router.get(
 );
 
 /* Callback route for OAuth2 authentication — issue JWT and redirect to frontend */
-router.get(
-  '/google/callback',
-  passport.authenticate('google', {
-    session: false,
-    failureRedirect: `${FRONTEND_URL}/login?error=google`,
-  }),
-  function (req, res) {
-    if (!req.user || !req.user._id) {
+router.get('/google/callback', (req, res, next) => {
+  passport.authenticate('google', { session: false }, (err, user) => {
+    if (err) {
+      const param = err.message === 'Registration is closed' ? 'registration_closed' : 'google';
+      return res.redirect(`${FRONTEND_URL}/login?error=${param}`);
+    }
+    if (!user || !user._id) {
       return res.redirect(`${FRONTEND_URL}/login?error=google`);
     }
     const token = jwt.sign(
-      { id: req.user._id, email: req.user.email },
+      { id: user._id, email: user.email },
       process.env.JWT_SECRET,
       { expiresIn: '7d' }
     );
     res.redirect(`${FRONTEND_URL}/login?token=${encodeURIComponent(token)}`);
-  }
-);
+  })(req, res, next);
+});
 
   
 module.exports = router;

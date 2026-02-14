@@ -3,6 +3,7 @@ const crypto = require('crypto');
 const passport = require('passport');
 const GoogleStrategy = require('passport-google-oauth20').Strategy;
 const User = require('../model/user.model');
+const system = require('../model/system.model');
 require('dotenv').config();
 
 const ADMIN_EMAIL = process.env.ADMIN_EMAIL || '';
@@ -30,6 +31,10 @@ passport.use(
           await User.updateOne({ _id: user._id }, { googleId: profile.id });
           user = { ...user, googleId: profile.id };
           return done(null, user);
+        }
+        const sys = await system.findOne({}).lean();
+        if (!sys?.openRegistration) {
+          return done(new Error('Registration is closed'), null);
         }
         const profilePhoto = profile.photos?.[0]?.value || '';
         const newUser = await User.create({

@@ -34,6 +34,8 @@ const preferencesSchema = new mongoose.Schema({
   showTopPickOnHome: { type: Boolean, default: true },
   /** true = show movie title on poster */
   showPosterTitle: { type: Boolean, default: false },
+  /** true = show promo ticker on home (no ads, feedback, etc.) */
+  showPromoTicker: { type: Boolean, default: true },
 }, { _id: false });
 
 const userSchema = new mongoose.Schema({

@@ -61,6 +61,30 @@ const validateToken = async (req, res, next) => {
   }
 };
 
+/**
+ * Optional auth: if valid Bearer token is present, sets req.user and req.userId; otherwise continues without 401.
+ * Use for routes that work for both anonymous and logged-in users (e.g. submit feedback).
+ */
+const optionalValidateToken = async (req, res, next) => {
+  try {
+    const authHeader = req.headers.authorization;
+    const token = authHeader && authHeader.startsWith('Bearer ')
+      ? authHeader.slice(7)
+      : null;
+    if (!token) return next();
+
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const user = await userModel.findById(decoded.id);
+    if (!user || user.isActive !== true) return next();
+
+    req.user = user;
+    req.userId = user._id;
+    next();
+  } catch {
+    next();
+  }
+};
+
 /** Must run after validateToken. Returns 403 if req.user.email is not adrianpurnama209@gmail.com */
 const validateAdmin = (req, res, next) => {
   if (req.user?.isAdmin !== true) {
@@ -72,4 +96,4 @@ const validateAdmin = (req, res, next) => {
   next();
 };
 
-module.exports = { validateToken, validateAdmin };
+module.exports = { validateToken, validateAdmin, optionalValidateToken };
