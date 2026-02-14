@@ -4,6 +4,7 @@ const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 const mongoose = require('mongoose');
 const systemModel = require('./model/system.model');
+const MediaModel = require('./model/media.model');
 const passport = require("./helper/passport.helper");
 const session = require('express-session');
 require('dotenv').config();
@@ -102,12 +103,24 @@ app.get('/api/health', (req, res) => {
     res.status(200).json({message : "Made By Love from Adrian"})
 })
 
+/** One-time fix: drop id_1 unique index if present. Causes E11000 dup key on upsert when docs lack id. */
+async function dropMediaIdIndex() {
+  try {
+    await MediaModel.collection.dropIndex('id_1');
+    console.log('Dropped media.id_1 index (fix for E11000 duplicate key)');
+  } catch (err) {
+    if (err.code === 27 || err.codeName === 'IndexNotFound') return; // index doesn't exist
+    console.warn('Could not drop media.id_1 index:', err.message);
+  }
+}
+
 mongoose.connect(process.env.MONGODB_URI, {
     dbName : "app",
 })
-.then(()=>{
-    populateSystem()
-    console.log("MognoDB Connected")
+.then(async () => {
+    await dropMediaIdIndex();
+    await populateSystem();
+    console.log("MongoDB Connected");
 })
 .catch((err)=> (console.log(err)))
 
