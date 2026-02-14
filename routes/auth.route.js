@@ -245,7 +245,7 @@ router.get('/is-admin', validateToken, validateAdmin, (req, res) => {
     })
 });
 
-const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:5173';
+const FRONTEND_URL = process.env.FE_URL || 'http://localhost:5173';
 
 /* Route to start OAuth2 authentication */
 router.get(
