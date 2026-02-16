@@ -1,8 +1,8 @@
 const express = require('express');
 const mongoose = require('mongoose');
-const { syncNowPlayingMovies, syncPopularMovies, syncTopRatedMovies, shouldSync, getLastSync, setLastSync, formatMediaImageUrls, formatMultiSearchResult, fetchMovieDetails, fetchMovieByImdbId, saveMovieToCache } = require('../helper/tmdb.helper');
+const { syncNowPlayingMovies, syncPopularMovies, syncTopRatedMovies, shouldSync, getLastSync, setLastSync, formatMediaImageUrls, formatMultiSearchResult, fetchMovieDetails, fetchMovieByImdbId, fetchMovieByTmdbId, saveMovieToCache } = require('../helper/tmdb.helper');
 const { getAllMovieServers } = require('../helper/movietv.helper');
-const { validateAdmin, validateToken } = require('../helper/validate.helper');
+const { validateAdmin, validateToken, optionalValidateToken } = require('../helper/validate.helper');
 const MediaModel = require('../model/media.model');
 const { tmdbApi } = require('../helper/api.helper');
 const router = express.Router();
@@ -43,20 +43,24 @@ router.get('/sync', async (req, res) => {
     });
 });
 
-router.get('/top-pick',validateToken, validateAdmin, async (req, res) => {
-    const { imdb_id } = req.query;
+router.get('/top-pick', validateToken, validateAdmin, async (req, res) => {
+    const { imdb_id, tmdb_id } = req.query;
     try {
-        if (!imdb_id || !String(imdb_id).trim()) {
+        const hasImdb = imdb_id != null && String(imdb_id).trim();
+        const hasTmdb = tmdb_id != null && String(tmdb_id).trim() !== '';
+        if (!hasImdb && !hasTmdb) {
             return res.status(400).json({
                 success: false,
-                message: 'imdb_id is required',
+                message: 'imdb_id or tmdb_id is required',
             });
         }
-        const movie = await fetchMovieByImdbId(imdb_id);
+        const movie = hasTmdb
+            ? await fetchMovieByTmdbId(tmdb_id)
+            : await fetchMovieByImdbId(imdb_id);
         if (!movie) {
             return res.status(404).json({
                 success: false,
-                message: 'Movie not found for this IMDB id',
+                message: hasTmdb ? 'Movie not found for this TMDB id' : 'Movie not found for this IMDB id',
             });
         }
         return res.status(200).json({
@@ -101,19 +105,23 @@ router.delete('/top-pick/:id', validateToken, validateAdmin, async (req, res) =>
 });
 
 router.post('/top-pick', validateToken, validateAdmin, async (req, res) => {
-    const { imdb_id } = req.body;
+    const { imdb_id, tmdb_id } = req.body;
     try {
-        if (!imdb_id || !String(imdb_id).trim()) {
+        const hasImdb = imdb_id != null && String(imdb_id).trim();
+        const hasTmdb = tmdb_id != null && (typeof tmdb_id === 'number' || String(tmdb_id).trim());
+        if (!hasImdb && !hasTmdb) {
             return res.status(400).json({
                 success: false,
-                message: 'imdb_id is required',
+                message: 'imdb_id or tmdb_id is required',
             });
         }
-        const movie = await fetchMovieByImdbId(imdb_id);
+        const movie = hasTmdb
+            ? await fetchMovieByTmdbId(tmdb_id)
+            : await fetchMovieByImdbId(imdb_id);
         if (!movie) {
             return res.status(404).json({
                 success: false,
-                message: 'Movie not found for this IMDB id',
+                message: hasTmdb ? 'Movie not found for this TMDB id' : 'Movie not found for this IMDB id',
             });
         }
         const saved = await saveMovieToCache(movie, 'top_pick');
@@ -164,7 +172,7 @@ router.get('/now_playing', paginatedCategoryHandler('now_playing'));
 router.get('/popular', paginatedCategoryHandler('popular'));
 router.get('/top_rated', paginatedCategoryHandler('top_rated'));
 
-router.get('/:id', async (req, res) => {
+router.get('/:id', optionalValidateToken, async (req, res) => {
     const { id } = req.params;
     try {
         const tmdbDetails = await fetchMovieDetails(id, true);
@@ -177,26 +185,27 @@ router.get('/:id', async (req, res) => {
 
         const merged = { ...tmdbDetails, recommendations };
 
-            Object.assign(merged, {
-                overview: tmdbDetails.overview ?? merged.overview,
-                title: tmdbDetails.title ?? merged.title,
-                poster_path: tmdbDetails.poster_path ?? merged.poster_path,
-                backdrop_path: tmdbDetails.backdrop_path ?? merged.backdrop_path,
-                release_date: tmdbDetails.release_date ?? merged.release_date,
-                runtime: tmdbDetails.runtime,
-                imdb_id: tmdbDetails.imdb_id,
-                genres: tmdbDetails.genres,
-            });
-            if (merged.id !== undefined) delete merged.id;
-            const watchLinks = await getAllMovieServers(id);
-            const data = formatMediaImageUrls(merged);
-            data.watchLinks = watchLinks;
-            return res.status(200).json({
-                success: true,
-                data,
-            });
-        }
-    catch (err) {
+        Object.assign(merged, {
+            overview: tmdbDetails.overview ?? merged.overview,
+            title: tmdbDetails.title ?? merged.title,
+            poster_path: tmdbDetails.poster_path ?? merged.poster_path,
+            backdrop_path: tmdbDetails.backdrop_path ?? merged.backdrop_path,
+            release_date: tmdbDetails.release_date ?? merged.release_date,
+            runtime: tmdbDetails.runtime,
+            imdb_id: tmdbDetails.imdb_id,
+            genres: tmdbDetails.genres,
+        });
+        if (merged.id !== undefined) delete merged.id;
+
+        const watchLinks = await getAllMovieServers(id, { adFree: req.user?.adFree === true });
+
+        const data = formatMediaImageUrls(merged);
+        data.watchLinks = watchLinks;
+        return res.status(200).json({
+            success: true,
+            data,
+        });
+    } catch (err) {
         return res.status(500).json({
             success: false,
             message: err.message || 'Failed to get movie',

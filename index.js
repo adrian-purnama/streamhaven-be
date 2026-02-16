@@ -25,6 +25,10 @@ const languagesRoutes = require('./routes/languages.route.js');
 const personRoutes = require('./routes/person.route.js');
 const supporterRoutes = require('./routes/supporter.route.js');
 const feedbackRoutes = require('./routes/data entry/feedback.route.js');
+const abyssRoutes = require('./routes/data entry/abyss.route.js');
+const stagingRoutes = require('./routes/staging.route.js');
+const uploadedVideoRoutes = require('./routes/uploadedVideo.route.js');
+const logRoutes = require('./routes/data entry/log.route.js');
 
 // --------------- Security headers ---------------
 app.use(helmet({
@@ -150,6 +154,10 @@ app.use('/api/languages', languagesRoutes)
 app.use('/api/person', personRoutes)
 app.use('/api/supporters', supporterRoutes)
 app.use('/api/feedback', feedbackRoutes)
+app.use('/api/abyss', abyssRoutes)
+app.use('/api/staging', stagingRoutes)
+app.use('/api/uploaded-videos', uploadedVideoRoutes)
+app.use('/api/logs', logRoutes)
 
 app.listen(PORT, () => {
     console.log(`Server is running on port ${PORT}`);

@@ -178,7 +178,7 @@ router.post('/register', async (req, res) => {
     const hashedPassword = await bcrypt.hash(password, 10)
 
     if(email === ADMIN_EMAIL){
-        const newUser = await user.create({ email, password: hashedPassword, isAdmin: true })
+        const newUser = await user.create({ email, password: hashedPassword, isAdmin: true, adFree: true })
         return res.status(200).json({
             success : true,
             message : "User created successfully",

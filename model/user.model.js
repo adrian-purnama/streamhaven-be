@@ -72,6 +72,10 @@ const userSchema = new mongoose.Schema({
     type: String,
     default: '',
   },
+  adFree: {
+    type: Boolean,
+    default: true,
+  },
   createdAt: {
     type: Date,
     default: Date.now,

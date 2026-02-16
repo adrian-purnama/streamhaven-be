@@ -4,10 +4,10 @@ const router = express.Router();
 const ServerModel = require('../../model/server.model');
 const { validateToken, validateAdmin } = require('../../helper/validate.helper');
 
-const USED_FOR_VALUES = ['tv', 'anime', 'movie'];
+const USED_FOR_VALUES = ['tv', 'anime', 'movie', 'my_player'];
 
 // GET / – list all servers, optionally filter by usedFor (no auth)
-// Query: ?usedFor=movie|tv|anime – only servers that include this type (sorted by createdAt desc)
+// Query: ?usedFor=movie|tv|anime|my_player – only servers that include this type (sorted by createdAt desc)
 router.get('/', async (req, res) => {
   try {
     const { usedFor: usedForQuery } = req.query;

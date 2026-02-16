@@ -294,6 +294,23 @@ const fetchMovieByImdbId = async (imdbId) => {
 };
 
 /**
+ * Fetch movie details by TMDB id.
+ * @param {number|string} tmdbId - TMDB movie id
+ * @returns {Promise<object|null>} Movie object or null if not found
+ */
+const fetchMovieByTmdbId = async (tmdbId) => {
+    const id = typeof tmdbId === 'number' ? tmdbId : parseInt(String(tmdbId || ''), 10);
+    if (!Number.isFinite(id)) return null;
+    try {
+        const res = await tmdbApi.get(`/movie/${id}`, { params: { language: 'en-US' } });
+        return res.data || null;
+    } catch (err) {
+        if (err.response?.status === 404) return null;
+        throw err;
+    }
+};
+
+/**
  * Save a single movie to cache with category (e.g. 'top_pick').
  * @param {object} movie - TMDB movie details (from fetchMovieByImdbId or similar)
  * @param {string} category - 'now_playing' | 'popular' | 'top_rated' | 'top_pick'
@@ -352,6 +369,7 @@ module.exports = {
     fetchTvDetails,
     formatEpisodeGroups,
     fetchMovieByImdbId,
+    fetchMovieByTmdbId,
     saveMovieToCache,
     GetReccomendations,
 }

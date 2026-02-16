@@ -1,0 +1,10 @@
+const LOG_NAME_ENUM = ['ABYSS_UPLOAD_LOG', 'STAGING_PROCESS_LOG', 'SYSTEM_LOG'];
+const LOG_ENTRY_LIMIT = 100;
+
+
+
+
+module.exports = {
+  LOG_NAME_ENUM,
+  LOG_ENTRY_LIMIT,
+};

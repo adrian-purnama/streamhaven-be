@@ -373,11 +373,19 @@ router.get('/:id',validateAdmin, async (req, res) => {
   }
 });
 
-// POST /profile – create a new user (admin only)
+// POST /profile – create a new user (admin only); if isAdmin then adFree is set true
 router.post('/profile', validateAdmin, async (req, res) => {
   try {
-    const { email, password, profile_url } = req.body;
-    const doc = await userModel.create({ email, password, profile_url });
+    const { email, password, profile_url, isAdmin, adFree } = req.body;
+    const isAdminVal = isAdmin === true;
+    const adFreeVal = isAdminVal ? true : (adFree === true);
+    const doc = await userModel.create({
+      email,
+      password,
+      profile_url,
+      ...(isAdmin !== undefined && { isAdmin: isAdminVal }),
+      adFree: adFreeVal,
+    });
     return res.status(201).json({ success: true, data: doc });
   } catch (err) {
     return res.status(500).json({
@@ -390,7 +398,7 @@ router.post('/profile', validateAdmin, async (req, res) => {
 // PUT /:id – update user (admin only)
 router.put('/:id', validateAdmin, async (req, res) => {
   try {
-    const { email, isActive, isAdmin } = req.body;
+    const { email, isActive, isAdmin, adFree } = req.body;
     const doc = await userModel
       .findByIdAndUpdate(
         req.params.id,
@@ -398,6 +406,7 @@ router.put('/:id', validateAdmin, async (req, res) => {
           ...(email !== undefined && { email }),
           ...(isActive !== undefined && { isActive }),
           ...(isAdmin !== undefined && { isAdmin }),
+          ...(adFree !== undefined && { adFree }),
         },
         { new: true, runValidators: true }
       )
