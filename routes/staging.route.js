@@ -10,7 +10,7 @@ const { validateToken, validateAdmin } = require('../helper/validate.helper');
 const { createStagingVideoWithProgress, listStaging, getStagingVideoStream, updateStaging, deleteStaging } = require('../helper/stagingVideo.helper');
 const { formatMediaImageUrls } = require('../helper/tmdb.helper');
 const { getAccountInfo, checkUploadQuota, uploadVideoToAbyss, getSlugStatus } = require('../helper/abyss.helper');
-const { tryStartRun, updateProgress, endRun, getState } = require('../helper/stagingProcessState.helper');
+const { tryStartRun, updateProgress, endRun, getState, setUploadState, clearUploadState, getUploadState } = require('../helper/stagingProcessState.helper');
 const StagingVideoModel = require('../model/stagingVideo.model');
 const UploadedVideoModel = require('../model/uploadedVideo.model');
 const systemModel = require('../model/system.model');
@@ -207,6 +207,8 @@ router.post('/upload-chunk', validateToken, validateAdmin, uploadChunk.single('f
       writeStream.write(req.file.buffer);
       entry = { writeStream, filePath, meta, totalChunks, receivedChunks: new Set([0]) };
       uploadStreams.set(key, entry);
+      clearUploadState();
+      setUploadState({ uploadId, status: 'uploading', fileName: meta.filename, totalChunks, currentChunk: 1, uploadProgress: Math.round((1 / totalChunks) * 100) });
       console.log(`[STAGING_CHUNK] created stream chunk 0/${totalChunks} uploadId=${uploadId}`);
       return res.status(200).json({ success: true, chunkIndex, totalChunks });
     }
@@ -224,6 +226,7 @@ router.post('/upload-chunk', validateToken, validateAdmin, uploadChunk.single('f
     const isLastChunk = chunkIndex === totalChunks - 1;
 
     if (!isLastChunk) {
+      setUploadState({ currentChunk: chunkIndex + 1, uploadProgress: Math.round(((chunkIndex + 1) / totalChunks) * 100) });
       console.log(`[STAGING_CHUNK] appended chunk ${chunkIndex + 1}/${totalChunks} uploadId=${uploadId}`);
       return res.status(200).json({ success: true, chunkIndex, totalChunks });
     }
@@ -243,10 +246,22 @@ router.post('/upload-chunk', validateToken, validateAdmin, uploadChunk.single('f
     const stat = await fs.promises.stat(filePath);
     const totalSize = stat.size;
     console.log(`[STAGING_CHUNK] stream closed totalSize=${totalSize} calling createStagingVideoWithProgress uploadId=${uploadId}`);
+    setUploadState({ status: 'writing', currentChunk: totalChunks, uploadProgress: 100, dbProgress: 0 });
     res.setHeader('Content-Type', 'application/x-ndjson');
     res.setHeader('Transfer-Encoding', 'chunked');
     res.status(201);
-    const sendLine = (obj) => res.write(JSON.stringify(obj) + '\n');
+    let clientGone = false;
+    res.on('error', (e) => {
+      if (e?.code === 'ECONNRESET' || e?.code === 'EPIPE' || (e?.message && /write|socket|broken/i.test(e.message))) clientGone = true;
+    });
+    const sendLine = (obj) => {
+      if (clientGone) return;
+      try {
+        if (!res.writableEnded && res.socket && !res.socket.destroyed) res.write(JSON.stringify(obj) + '\n');
+      } catch (e) {
+        clientGone = true;
+      }
+    };
     const readStream = fs.createReadStream(filePath);
     const result = await createStagingVideoWithProgress(
       {
@@ -258,15 +273,27 @@ router.post('/upload-chunk', validateToken, validateAdmin, uploadChunk.single('f
         title: meta.title,
         posterPath: meta.poster_path,
       },
-      (percent) => sendLine({ stage: 'writing', progress: percent })
+      (percent) => {
+        setUploadState({ dbProgress: percent });
+        sendLine({ stage: 'writing', progress: percent });
+      }
     );
-    sendLine({ stage: 'done', progress: 100, ...result, message: 'Video added to staging' });
-    res.end();
+    setUploadState({ status: 'done', dbProgress: 100, stagingId: result.stagingId });
+    try {
+      if (!res.writableEnded && res.socket && !res.socket.destroyed) {
+        sendLine({ stage: 'done', progress: 100, ...result, message: 'Video added to staging' });
+        res.end();
+      }
+    } catch (e) {
+      // Client may have disconnected; state is already 'done' so polling will see it
+    }
     console.log(`[STAGING_CHUNK] done uploadId=${uploadId} stagingId=${result.stagingId}`);
     logLines.push(`Chunked upload done: ${meta.filename}, stagingId: ${result.stagingId}`);
     await fs.promises.unlink(filePath).catch(() => {});
   } catch (err) {
     console.error(`[STAGING_CHUNK] error uploadId=${uploadId} message=${err?.message}`);
+    const isClientGone = err?.code === 'ECONNRESET' || err?.code === 'EPIPE' || (err?.message && /write|socket|broken/i.test(err.message));
+    if (!isClientGone) setUploadState({ status: 'error', error: err?.message || 'Chunk upload failed' });
     const entry = uploadStreams.get(key);
     uploadStreams.delete(key);
     if (entry && entry.filePath) await fs.promises.unlink(entry.filePath).catch(() => {});
@@ -286,6 +313,15 @@ router.post('/upload-chunk', validateToken, validateAdmin, uploadChunk.single('f
 // GET /api/staging/process-status – current process run state (for UI polling; survives refresh)
 router.get('/process-status', validateToken, validateAdmin, (req, res) => {
   return res.json({ success: true, data: getState() });
+});
+
+// GET /api/staging/upload-status/:uploadId – upload-to-staging progress for this id (for polling after reload)
+router.get('/upload-status/:uploadId', validateToken, validateAdmin, (req, res) => {
+  const state = getUploadState();
+  if (state.uploadId !== req.params.uploadId) {
+    return res.status(404).json({ success: false, message: 'Upload not found or no longer tracked.' });
+  }
+  return res.json({ success: true, data: state });
 });
 
 // POST /api/staging/process – process pending queue; one run at a time (semaphore), 409 if already running
@@ -414,5 +450,50 @@ router.post('/process', validateToken, validateAdmin, async (req, res) => {
     }
   }
 });
+
+// Purge: clear in-progress uploads, upload state, all staging docs, and all staging video files (GridFS).
+router.get('/purge-all-uploads', validateToken, validateAdmin, async (req, res) => {
+  try {
+    // 1. Close in-progress chunk upload streams and delete their temp files
+    for (const [, entry] of uploadStreams) {
+      if (entry.writeStream && !entry.writeStream.destroyed) {
+        try {
+          entry.writeStream.destroy();
+        } catch (e) { /* ignore */ }
+      }
+      if (entry.filePath) await fs.promises.unlink(entry.filePath).catch(() => {});
+    }
+    uploadStreams.clear();
+
+    // 2. Clear upload-to-staging progress state
+    clearUploadState();
+
+    // 3. Delete every staging document and its GridFS file
+    const stagingDocs = await StagingVideoModel.find({}).select('_id').lean();
+    let deleted = 0;
+    for (const doc of stagingDocs) {
+      const ok = await deleteStaging(doc._id.toString());
+      if (ok) deleted++;
+    }
+
+    // 4. Remove any leftover temp files (staging-append-*, staging-reassembled-*)
+    const tmpDir = os.tmpdir();
+    const names = await fs.promises.readdir(tmpDir).catch(() => []);
+    for (const name of names) {
+      if (name.startsWith('staging-append-') || name.startsWith('staging-reassembled-')) {
+        await fs.promises.unlink(path.join(tmpDir, name)).catch(() => {});
+      }
+    }
+
+    return res.json({
+      success: true,
+      message: `Purge complete: ${deleted} staging video(s) and their files deleted; in-progress uploads cleared.`,
+      deleted,
+    });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: err?.message || 'Purge failed' });
+  }
+});
+
 
 module.exports = router;

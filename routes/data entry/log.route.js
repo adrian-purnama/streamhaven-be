@@ -12,7 +12,9 @@ router.get('/categories', (req, res) => {
   return res.json({ success: true, data: LOG_NAME_ENUM });
 });
 
-// GET /api/logs?category=STAGING_PROCESS_LOG|all&skip=0&limit=50 – paginated log lines; category=all returns merged logs from all categories
+// GET /api/logs?category=...&skip=0&limit=50
+//   &format=entries → returns { list: [ { logName, logTimestamp, log } ], total } (paginated by entry)
+//   else → returns { list: string[], total } (flat lines, legacy)
 router.get('/', async (req, res) => {
   try {
     const category = req.query.category?.trim();
@@ -20,10 +22,25 @@ router.get('/', async (req, res) => {
     if (!isAll && !LOG_NAME_ENUM.includes(category)) {
       return res.status(400).json({ success: false, message: 'Valid category or "all" required (use GET /api/logs/categories)' });
     }
+    const formatEntries = req.query.format === 'entries';
     const limit = Math.min(Math.max(1, parseInt(req.query.limit, 10) || 50), 100);
     const skip = Math.max(0, parseInt(req.query.skip, 10) || 0);
     const sys = await systemModel.findOne({}).lean();
     const logs = sys?.systemLogs || [];
+
+    if (formatEntries) {
+      let entries = isAll ? [...logs] : logs.filter((e) => e.logName === category);
+      entries = entries.reverse(); // newest first
+      const total = entries.length;
+      entries = entries.slice(skip, skip + limit);
+      const list = entries.map((e) => ({
+        logName: e.logName,
+        logTimestamp: e.logTimestamp ? new Date(e.logTimestamp).toISOString() : null,
+        log: e.log || [],
+      }));
+      return res.json({ success: true, data: { list, total } });
+    }
+
     let allLines;
     if (isAll) {
       allLines = [];

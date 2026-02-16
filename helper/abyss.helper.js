@@ -161,10 +161,35 @@ async function getSlugStatus(slug) {
   return 'uploaded_not_ready';
 }
 
+/**
+ * Delete a video from Abyss by slug.
+ * @param {string} slug - Abyss file slug
+ * @returns {{ success: boolean, message?: string }}
+ */
+async function deleteAbyssVideoById(slug) {
+  try {
+    const token = await getAbyssToken();
+    const response = await axios.delete(`${AbyssBaseURL}/v1/files/${slug}`, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        accept: 'application/json',
+      },
+    });
+    const data = response.data;
+    if (response.status >= 200 && response.status < 300) {
+      return { success: true };
+    }
+    return { success: false, message: data?.msg ?? data?.message ?? response.statusText ?? 'Delete failed' };
+  } catch (err) {
+    return { success: false, message: err?.message ?? 'Delete failed' };
+  }
+}
+
 module.exports = {
   getAbyssToken,
   getAccountInfo,
   checkUploadQuota,
   uploadVideoToAbyss,
   getSlugStatus,
+  deleteAbyssVideoById,
 };
