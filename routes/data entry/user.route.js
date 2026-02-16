@@ -373,19 +373,11 @@ router.get('/:id',validateAdmin, async (req, res) => {
   }
 });
 
-// POST /profile – create a new user (admin only); if isAdmin then adFree is set true
+// POST /profile – create a new user (admin only)
 router.post('/profile', validateAdmin, async (req, res) => {
   try {
-    const { email, password, profile_url, isAdmin, adFree } = req.body;
-    const isAdminVal = isAdmin === true;
-    const adFreeVal = isAdminVal ? true : (adFree === true);
-    const doc = await userModel.create({
-      email,
-      password,
-      profile_url,
-      ...(isAdmin !== undefined && { isAdmin: isAdminVal }),
-      adFree: adFreeVal,
-    });
+    const { email, password, profile_url } = req.body;
+    const doc = await userModel.create({ email, password, profile_url });
     return res.status(201).json({ success: true, data: doc });
   } catch (err) {
     return res.status(500).json({
