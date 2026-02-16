@@ -51,20 +51,17 @@ const uploadChunk = multer({
   },
 });
 
-const CHUNKS_DIR = path.join(os.tmpdir(), 'staging-chunks');
-function getChunkDir(uploadId) {
-  return path.join(CHUNKS_DIR, String(uploadId).replace(/[^a-zA-Z0-9-_]/g, ''));
+// Append-only upload: one write stream per uploadId. Chunks appended as they arrive; no full-file reassembly in RAM.
+const uploadStreams = new Map(); // uploadId -> { writeStream, filePath, meta, totalChunks, receivedChunks: Set }
+
+function safeUploadId(id) {
+  return String(id).replace(/[^a-zA-Z0-9-_]/g, '') || 'unknown';
 }
-async function cleanup(uploadId, reassembledPath) {
-  try {
-    const dir = getChunkDir(uploadId);
-    const entries = await fs.promises.readdir(dir).catch(() => []);
-    for (const e of entries) await fs.promises.unlink(path.join(dir, e)).catch(() => {});
-    await fs.promises.rmdir(dir).catch(() => {});
-  } catch { /* ignore */ }
-  if (reassembledPath) {
-    await fs.promises.unlink(reassembledPath).catch(() => {});
-  }
+
+async function removeUploadStream(uploadId, filePath) {
+  const key = safeUploadId(uploadId);
+  uploadStreams.delete(key);
+  if (filePath) await fs.promises.unlink(filePath).catch(() => {});
 }
 
 // GET /api/staging – list staging with pagination, optional status/statuses filter, and current process run
@@ -169,7 +166,7 @@ router.post('/upload', validateToken, validateAdmin, upload.single('file'), asyn
   }
 });
 
-// POST /api/staging/upload-chunk – chunked upload (each chunk < 100MB for Cloudflare). Reassembly when all chunks present (order-independent).
+// POST /api/staging/upload-chunk – append each chunk to one file (no reassembly in RAM). Last chunk triggers DB write + NDJSON.
 router.post('/upload-chunk', validateToken, validateAdmin, uploadChunk.single('file'), async (req, res) => {
   const uploadId = req.body.uploadId != null ? String(req.body.uploadId).trim() : null;
   const chunkIndex = req.body.chunkIndex != null ? parseInt(req.body.chunkIndex, 10) : NaN;
@@ -180,117 +177,77 @@ router.post('/upload-chunk', validateToken, validateAdmin, uploadChunk.single('f
   if (!req.file || !req.file.buffer) {
     return res.status(400).json({ success: false, message: 'Chunk file required' });
   }
-  const chunkSize = req.file.buffer?.length ?? 0;
-  console.log(`[STAGING_CHUNK] received uploadId=${uploadId} chunkIndex=${chunkIndex} totalChunks=${totalChunks} chunkSize=${chunkSize}`);
-  const chunkDir = getChunkDir(uploadId);
-  const chunkPath = path.join(chunkDir, String(chunkIndex));
-  const metaPath = path.join(chunkDir, 'meta.json');
-  const lockPath = path.join(chunkDir, '.reassembling');
+  const key = safeUploadId(uploadId);
+  const chunkSize = req.file.buffer.length;
+  console.log(`[STAGING_CHUNK] received uploadId=${uploadId} chunkIndex=${chunkIndex}/${totalChunks} chunkSize=${chunkSize}`);
   let logLines = [];
   try {
-    await fs.promises.mkdir(chunkDir, { recursive: true });
-    await fs.promises.writeFile(chunkPath, req.file.buffer);
-    console.log(`[STAGING_CHUNK] saved chunk ${chunkIndex}/${totalChunks} uploadId=${uploadId}`);
+    let entry = uploadStreams.get(key);
+
     if (chunkIndex === 0) {
-      const filename = req.file.originalname || req.file.filename || 'video.mp4';
+      if (entry && entry.receivedChunks.has(0)) {
+        console.log(`[STAGING_CHUNK] chunk 0 already received (idempotent) uploadId=${uploadId}`);
+        return res.status(200).json({ success: true, chunkIndex, totalChunks });
+      }
+      const ext = path.extname(req.file.originalname || 'video.mp4') || '.mp4';
+      const filePath = path.join(os.tmpdir(), `staging-append-${uploadId}-${Date.now()}${ext}`);
+      const writeStream = fs.createWriteStream(filePath, { flags: 'a' });
       let mimetype = req.file.mimetype || 'video/mp4';
       if (mimetype === 'application/octet-stream') {
-        const ext = (path.extname(filename) || '').toLowerCase();
-        mimetype = { '.mp4': 'video/mp4', '.webm': 'video/webm', '.mkv': 'video/x-matroska' }[ext] || 'video/mp4';
+        const e = (path.extname(req.file.originalname || '') || '').toLowerCase();
+        mimetype = { '.mp4': 'video/mp4', '.webm': 'video/webm', '.mkv': 'video/x-matroska' }[e] || 'video/mp4';
       }
       const meta = {
+        filename: req.file.originalname || req.file.filename || 'video.mp4',
+        mimetype,
         tmdbId: req.body.tmdbId != null ? Number(req.body.tmdbId) : null,
         title: req.body.title != null ? String(req.body.title) : '',
         poster_path: req.body.poster_path != null ? String(req.body.poster_path) : null,
-        filename,
-        mimetype,
-        totalChunks,
       };
-      await fs.promises.writeFile(metaPath, JSON.stringify(meta));
-    }
-    const isLastChunk = chunkIndex === totalChunks - 1;
-    const waitMs = 15000
-    const pollMs = 400;
-    let meta;
-    let allPresent = false;
-    const checkAllPresent = async () => {
-      try {
-        const metaRaw = await fs.promises.readFile(metaPath, 'utf8');
-        meta = JSON.parse(metaRaw);
-        for (let i = 0; i < meta.totalChunks; i++) {
-          await fs.promises.access(path.join(chunkDir, String(i)));
-        }
-        return true;
-      } catch {
-        return false;
-      }
-    };
-    if (await checkAllPresent()) {
-      allPresent = true;
-      if (isLastChunk) console.log(`[STAGING_CHUNK] all present immediately uploadId=${uploadId}`);
-    } else if (isLastChunk) {
-      console.log(`[STAGING_CHUNK] last chunk: waiting up to ${waitMs}ms for all chunks uploadId=${uploadId}`);
-      const deadline = Date.now() + waitMs;
-      while (Date.now() < deadline) {
-        await new Promise((r) => setTimeout(r, pollMs));
-        if (await checkAllPresent()) {
-          allPresent = true;
-          console.log(`[STAGING_CHUNK] all present after wait uploadId=${uploadId}`);
-          break;
-        }
-      }
-    }
-    if (!allPresent) {
-      if (isLastChunk) {
-        console.log(`[STAGING_CHUNK] last chunk: not all present after wait uploadId=${uploadId}`);
-        let debug = { chunkDir, uploadId };
-        try {
-          const names = await fs.promises.readdir(chunkDir).catch(() => []);
-          debug.filesInDir = names;
-          try {
-            const m = JSON.parse(await fs.promises.readFile(metaPath, 'utf8'));
-            debug.metaTotalChunks = m.totalChunks;
-          } catch {
-            debug.metaExists = false;
-          }
-        } catch (e) {
-          debug.readdirError = e.message;
-        }
-        return res.status(400).json({
-          success: false,
-          message: 'Not all chunks found in time. On a single server, chunk 1 may have been processed before chunk 0 finished writing; retry. If using multiple servers, use sticky sessions.',
-          debug,
-        });
-      }
-      console.log(`[STAGING_CHUNK] returning 200 (chunk saved, not last or not all present) chunkIndex=${chunkIndex}`);
+      writeStream.write(req.file.buffer);
+      entry = { writeStream, filePath, meta, totalChunks, receivedChunks: new Set([0]) };
+      uploadStreams.set(key, entry);
+      console.log(`[STAGING_CHUNK] created stream chunk 0/${totalChunks} uploadId=${uploadId}`);
       return res.status(200).json({ success: true, chunkIndex, totalChunks });
     }
-    try {
-      await fs.promises.writeFile(lockPath, '1', { flag: 'wx' });
-    } catch (e) {
-      if (e.code === 'EEXIST') {
-        console.log(`[STAGING_CHUNK] lock EEXIST, skipping reassembly uploadId=${uploadId}`);
-        return res.status(200).json({ success: true, chunkIndex, totalChunks });
-      }
-      throw e;
+
+    if (!entry) {
+      return res.status(400).json({ success: false, message: 'Send chunk 0 first.' });
     }
-    const memBefore = process.memoryUsage();
-    console.log(`[STAGING_CHUNK] reassembly started uploadId=${uploadId} totalChunks=${totalChunks} heapMB=${Math.round(memBefore.heapUsed / 1024 / 1024)}`);
-    const reassembledPath = path.join(os.tmpdir(), `staging-reassembled-${uploadId}-${Date.now()}${path.extname(meta.filename) || '.mp4'}`);
-    let totalSize = 0;
-    for (let i = 0; i < totalChunks; i++) {
-      const p = path.join(chunkDir, String(i));
-      const buf = await fs.promises.readFile(p);
-      totalSize += buf.length;
-      await fs.promises.appendFile(reassembledPath, buf);
-      if (i % 5 === 0 || i === totalChunks - 1) console.log(`[STAGING_CHUNK] appended chunk ${i + 1}/${totalChunks} totalSize=${totalSize}`);
+    if (entry.receivedChunks.has(chunkIndex)) {
+      console.log(`[STAGING_CHUNK] chunk ${chunkIndex} already received (idempotent) uploadId=${uploadId}`);
+      return res.status(200).json({ success: true, chunkIndex, totalChunks });
     }
-    console.log(`[STAGING_CHUNK] reassembly done, calling createStagingVideoWithProgress uploadId=${uploadId} totalSize=${totalSize} heapMB=${Math.round(process.memoryUsage().heapUsed / 1024 / 1024)}`);
+
+    entry.writeStream.write(req.file.buffer);
+    entry.receivedChunks.add(chunkIndex);
+    const isLastChunk = chunkIndex === totalChunks - 1;
+
+    if (!isLastChunk) {
+      console.log(`[STAGING_CHUNK] appended chunk ${chunkIndex + 1}/${totalChunks} uploadId=${uploadId}`);
+      return res.status(200).json({ success: true, chunkIndex, totalChunks });
+    }
+
+    console.log(`[STAGING_CHUNK] last chunk appended, closing stream uploadId=${uploadId}`);
+    const writeStream = entry.writeStream;
+    const filePath = entry.filePath;
+    const meta = entry.meta;
+    uploadStreams.delete(key);
+
+    await new Promise((resolve, reject) => {
+      writeStream.once('finish', resolve);
+      writeStream.once('error', reject);
+      writeStream.end();
+    });
+
+    const stat = await fs.promises.stat(filePath);
+    const totalSize = stat.size;
+    console.log(`[STAGING_CHUNK] stream closed totalSize=${totalSize} calling createStagingVideoWithProgress uploadId=${uploadId}`);
     res.setHeader('Content-Type', 'application/x-ndjson');
     res.setHeader('Transfer-Encoding', 'chunked');
     res.status(201);
     const sendLine = (obj) => res.write(JSON.stringify(obj) + '\n');
-    const readStream = fs.createReadStream(reassembledPath);
+    const readStream = fs.createReadStream(filePath);
     const result = await createStagingVideoWithProgress(
       {
         readStream,
@@ -307,18 +264,18 @@ router.post('/upload-chunk', validateToken, validateAdmin, uploadChunk.single('f
     res.end();
     console.log(`[STAGING_CHUNK] done uploadId=${uploadId} stagingId=${result.stagingId}`);
     logLines.push(`Chunked upload done: ${meta.filename}, stagingId: ${result.stagingId}`);
-    // Cleanup chunk dir and reassembled file after successful reassembly
-    cleanup(uploadId, reassembledPath);
+    await fs.promises.unlink(filePath).catch(() => {});
   } catch (err) {
-    console.error(`[STAGING_CHUNK] error uploadId=${uploadId} message=${err?.message} stack=${err?.stack?.split('\n')[0]}`);
+    console.error(`[STAGING_CHUNK] error uploadId=${uploadId} message=${err?.message}`);
+    const entry = uploadStreams.get(key);
+    uploadStreams.delete(key);
+    if (entry && entry.filePath) await fs.promises.unlink(entry.filePath).catch(() => {});
     if (!res.headersSent) {
       return res.status(400).json({ success: false, message: err.message || 'Chunk upload failed' });
     }
     res.write(JSON.stringify({ stage: 'error', message: err.message || 'Upload failed' }) + '\n');
     res.end();
     logLines.push(`Chunked upload failed: ${err?.message || err}`);
-    // Cleanup on error too (reassembly was attempted but failed)
-    cleanup(uploadId);
   } finally {
     if (logLines.length > 0) {
       await systemModel.appendLog('STAGING_PROCESS_LOG', logLines).catch(() => {});
