@@ -6,9 +6,12 @@ const { abyssApi, AbyssBaseURL, AbyssApiKey } = require('./api.helper');
 
 const ABYSS_EMAIL = process.env.ABYSS_EMAIL;
 const ABYSS_PASSWORD = process.env.ABYSS_PASSWORD;
-/** Full upload URL from Abyss/Hydrax (e.g. http://up.hydrax.net/YOUR_UPLOAD_KEY) */
-// const ABYSS_UPLOAD_URL = process.env.ABYSS_LINK + '/' + process.env.ABYSS_API_KEY;
-const ABYSS_UPLOAD_URL = "http://up.hydrax.net/f2c891751f979e258a27e7276b336fd2"
+const ABYSS_API_KEY = process.env.ABYSS_API_KEY;
+const ABYSS_LINK = process.env.ABYSS_LINK;
+const ABYSS_LINK_2 = process.env.ABYSS_LINK_2;
+
+const ABYSS_UPLOAD_URL = ABYSS_LINK_2 + '/' + ABYSS_API_KEY;
+
 /**
  * Get a valid Abyss token: from system doc if present and not expired, else login and save.
  */
