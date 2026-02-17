@@ -49,6 +49,7 @@ const stagingVideoSchema = new Schema(
       default: '',
     },
     /**
+     * writing = file is still being streamed to GridFS (do not show in staging list).
      * pending = still in staging, queued.
      * uploading = currently uploading to Abyss.
      * storage_fail / daily_fail / max_upload_fail = Abyss quota check failed; retry tomorrow.
@@ -58,7 +59,7 @@ const stagingVideoSchema = new Schema(
      */
     status: {
       type: String,
-      enum: ['pending', 'uploading', 'storage_fail', 'daily_fail', 'max_upload_fail', 'uploaded_not_ready', 'ready', 'error'],
+      enum: ['writing', 'pending', 'uploading', 'storage_fail', 'daily_fail', 'max_upload_fail', 'uploaded_not_ready', 'ready', 'error'],
       default: 'pending',
       index: true,
     },

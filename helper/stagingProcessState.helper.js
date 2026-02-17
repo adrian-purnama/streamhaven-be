@@ -15,6 +15,42 @@ let state = {
 };
 
 /**
+ * State for download-queue: only one job can run at a time (downloader returns 503 if busy).
+ * tryStartDownloadJob(jobId) / endDownloadJob() used by downloadQueue.route.js.
+ */
+let downloadQueueState = {
+  isJobRunning: false,
+  currentJobId: null,
+};
+
+/**
+ * Try to claim "one download job running". Returns false if already running.
+ * @param {string} jobId
+ * @returns {boolean}
+ */
+function tryStartDownloadJob(jobId) {
+  if (downloadQueueState.isJobRunning) return false;
+  downloadQueueState.isJobRunning = true;
+  downloadQueueState.currentJobId = jobId != null ? String(jobId) : null;
+  return true;
+}
+
+/**
+ * Release the download-job lock (call when job finishes via webhook done/failed).
+ */
+function endDownloadJob() {
+  downloadQueueState.isJobRunning = false;
+  downloadQueueState.currentJobId = null;
+}
+
+/**
+ * @returns {boolean}
+ */
+function isDownloadJobRunning() {
+  return downloadQueueState.isJobRunning;
+}
+
+/**
  * State for "upload to staging" (chunked upload → write to staging).
  * Frontend can poll GET /api/staging/process-status and read data.upload.
  */
@@ -179,4 +215,7 @@ module.exports = {
   setUploadState,
   clearUploadState,
   getUploadState,
+  tryStartDownloadJob,
+  endDownloadJob,
+  isDownloadJobRunning,
 };

@@ -65,6 +65,87 @@ async function createStagingVideoWithProgress(
 }
 
 /**
+ * Stream upload to GridFS without knowing size upfront (e.g. from multipart stream).
+ * Counts bytes as it streams; calls onProgress(percent) with 0 until end then 100.
+ * @param {{ readStream: NodeJS.ReadableStream, mimetype: string, originalname: string, tmdbId?: number, imdbId?: string, title?: string, posterPath?: string }}
+ * @param {(percent: number) => void} onProgress
+ * @returns {Promise<{ stagingId: string, gridFsFileId: string, size: number }>}
+ */
+async function createStagingVideoFromStream(
+  { readStream, mimetype, originalname, tmdbId = null, imdbId = null, title = '', posterPath = null },
+  onProgress
+) {
+  if (!ALLOWED_TYPES.includes(mimetype)) {
+    throw new Error(`Unsupported video type: ${mimetype}. Use: ${ALLOWED_TYPES.join(', ')}`);
+  }
+
+  const bucket = getBucket();
+  const filename = originalname || `video-${Date.now()}.mp4`;
+  const uploadStream = bucket.openUploadStream(filename, { metadata: { contentType: mimetype } });
+  const gridFsFileId = uploadStream.id;
+
+  // Create staging doc with status 'writing' so it does not appear in the staging list until upload is 100% complete
+  const staging = await StagingVideoModel.create({
+    gridFsFileId,
+    filename,
+    size: 0,
+    contentType: mimetype,
+    tmdbId,
+    imdbId,
+    poster_path: posterPath || undefined,
+    title,
+    status: 'writing',
+  });
+
+  let written = 0;
+  const progressTransform = new Transform({
+    transform(chunk, enc, cb) {
+      written += chunk.length;
+      if (typeof onProgress === 'function') onProgress(written > 0 ? 99 : 0);
+      cb(null, chunk);
+    },
+  });
+
+  try {
+    await new Promise((resolve, reject) => {
+      readStream.pipe(progressTransform).pipe(uploadStream);
+      uploadStream.on('finish', () => resolve(uploadStream.id));
+      uploadStream.on('error', reject);
+      readStream.on('error', reject);
+    });
+  } catch (err) {
+    await bucket.delete(gridFsFileId).catch(() => {});
+    await StagingVideoModel.updateOne(
+      { _id: staging._id },
+      { $set: { status: 'error', errorMessage: err?.message || 'Upload failed' } }
+    );
+    throw err;
+  }
+
+  const size = written;
+  if (size > MAX_SIZE_BYTES) {
+    await bucket.delete(gridFsFileId);
+    await StagingVideoModel.updateOne(
+      { _id: staging._id },
+      { $set: { status: 'error', errorMessage: `Video too large. Max ${MAX_SIZE_BYTES / 1024 / 1024 / 1024}GB` } }
+    );
+    throw new Error(`Video too large. Max ${MAX_SIZE_BYTES / 1024 / 1024 / 1024}GB`);
+  }
+  if (typeof onProgress === 'function') onProgress(100);
+
+  await StagingVideoModel.updateOne(
+    { _id: staging._id },
+    { $set: { size, status: 'pending' } }
+  );
+
+  return {
+    stagingId: staging._id.toString(),
+    gridFsFileId: gridFsFileId.toString(),
+    size,
+  };
+}
+
+/**
  * Get staging document by id.
  */
 async function getStagingById(stagingId) {
@@ -162,6 +243,7 @@ async function deleteStaging(stagingId) {
 
 module.exports = {
   createStagingVideoWithProgress,
+  createStagingVideoFromStream,
   getStagingById,
   getStagingVideoStream,
   listStaging,

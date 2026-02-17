@@ -2,6 +2,7 @@ const express = require('express');
 const axios = require('axios');
 const { validateToken, validateAdmin } = require('../helper/validate.helper');
 const { getPosterUrl } = require('../helper/movietv.helper');
+const { tryStartDownloadJob, endDownloadJob, isDownloadJobRunning } = require('../helper/stagingProcessState.helper');
 const DownloadQueueModel = require('../model/downloadQueue.model');
 
 const router = express.Router();
@@ -46,10 +47,16 @@ async function startNextWaitingJob() {
   }
 
   const jobId = next.jobId || next._id.toString();
+  if (!tryStartDownloadJob(jobId)) {
+    console.log('[download-queue] startNextWaitingJob: job already running, skipping');
+    return null;
+  }
+
   console.log('[download-queue] startNextWaitingJob: starting', jobId, next.title);
   await DownloadQueueModel.updateOne({ _id: next._id }, { $set: { jobId, status: 'downloading' } });
 
   if (!DOWNLOADER_URL) {
+    endDownloadJob();
     await DownloadQueueModel.updateOne(
       { _id: next._id },
       { $set: { status: 'failed', errorMessage: 'DOWNLOADER_URL not set' } }
@@ -84,6 +91,7 @@ async function startNextWaitingJob() {
 
   const errorMessage = lastError?.response?.data?.message || lastError?.message || 'Downloader call failed';
   console.log('[download-queue] startNextWaitingJob: downloader failed', errorMessage);
+  endDownloadJob();
   await DownloadQueueModel.updateOne(
     { _id: next._id },
     { $set: { status: 'failed', errorMessage } }
@@ -194,6 +202,9 @@ router.post('/process', validateToken, validateAdmin, async (req, res) => {
 
 router.post('/process/start', validateToken, validateAdmin, async (req, res) => {
   try {
+    if (isDownloadJobRunning()) {
+      return res.json({ success: true, message: 'Job already in progress', data: null });
+    }
     const started = await startNextWaitingJob();
     if (!started) {
       return res.status(404).json({ success: false, message: 'No waiting jobs' });
@@ -260,6 +271,7 @@ router.post('/webhook/upload-done', checkWebhookSecret, express.json(), async (r
       { new: true }
     );
     if (!doc) return res.status(404).json({ success: false, message: 'Job not found' });
+    endDownloadJob();
     console.log('[download-queue] webhook upload-done: scheduling startNextWaitingJob in', START_NEXT_DELAY_MS, 'ms');
     setTimeout(() => startNextWaitingJob().catch((e) => console.log('[download-queue] startNextWaitingJob error', e.message)), START_NEXT_DELAY_MS);
     return res.json({ success: true, data: doc });
@@ -280,6 +292,7 @@ router.post('/webhook/failed', checkWebhookSecret, express.json(), async (req, r
       { new: true }
     );
     if (!doc) return res.status(404).json({ success: false, message: 'Job not found' });
+    endDownloadJob();
     console.log('[download-queue] webhook failed: scheduling startNextWaitingJob in', START_NEXT_DELAY_MS, 'ms');
     setTimeout(() => startNextWaitingJob().catch((e) => console.log('[download-queue] startNextWaitingJob error', e.message)), START_NEXT_DELAY_MS);
     return res.json({ success: true, data: doc });

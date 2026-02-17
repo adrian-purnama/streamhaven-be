@@ -7,7 +7,7 @@ const { pipeline } = require('stream');
 const { promisify } = require('util');
 const pipelineAsync = promisify(pipeline);
 const { validateToken, validateAdmin, validateStagingAuth } = require('../helper/validate.helper');
-const { createStagingVideoWithProgress, listStaging, getStagingVideoStream, updateStaging, deleteStaging } = require('../helper/stagingVideo.helper');
+const { createStagingVideoWithProgress, createStagingVideoFromStream, listStaging, getStagingVideoStream, updateStaging, deleteStaging } = require('../helper/stagingVideo.helper');
 const { formatMediaImageUrls } = require('../helper/tmdb.helper');
 const { getAccountInfo, checkUploadQuota, uploadVideoToAbyss, getSlugStatus } = require('../helper/abyss.helper');
 const { tryStartRun, updateProgress, endRun, getState, setUploadState, clearUploadState, getUploadState } = require('../helper/stagingProcessState.helper');
@@ -29,6 +29,39 @@ const storage = multer.diskStorage({
 });
 const upload = multer({
   storage,
+  limits: { fileSize: 5 * 1024 * 1024 * 1024 }, // 5GB
+  fileFilter: (req, file, cb) => {
+    const allowed = ['video/mp4', 'video/webm', 'video/x-matroska'];
+    if (allowed.includes(file.mimetype)) return cb(null, true);
+    cb(new Error(`Unsupported type: ${file.mimetype}. Use MP4, WebM, or MKV.`));
+  },
+});
+
+// Streaming upload: pipe multipart file stream directly to GridFS (no temp file)
+const streamingUploadStorage = {
+  _handleFile(req, file, cb) {
+    const sendLine = req._stagingSendLine;
+    const tmdbId = req.body.tmdbId != null ? Number(req.body.tmdbId) : null;
+    const title = req.body.title != null ? String(req.body.title) : '';
+    const posterPath = req.body.poster_path != null ? String(req.body.poster_path) : null;
+    createStagingVideoFromStream(
+      {
+        readStream: file.stream,
+        mimetype: file.mimetype,
+        originalname: file.originalname || file.filename || 'video.mp4',
+        tmdbId,
+        title,
+        posterPath,
+      },
+      (percent) => { if (sendLine) sendLine({ stage: 'writing', progress: percent }); }
+    )
+      .then((result) => cb(null, { size: result.size, stagingId: result.stagingId, gridFsFileId: result.gridFsFileId }))
+      .catch((err) => cb(null, { size: 0, uploadError: err?.message || 'Upload failed' }));
+  },
+  _removeFile(req, file, cb) { cb(null); },
+};
+const uploadStream = multer({
+  storage: streamingUploadStorage,
   limits: { fileSize: 5 * 1024 * 1024 * 1024 }, // 5GB
   fileFilter: (req, file, cb) => {
     const allowed = ['video/mp4', 'video/webm', 'video/x-matroska'];
@@ -108,48 +141,34 @@ router.get('/', validateToken, validateAdmin, async (req, res) => {
   }
 });
 
-// POST /api/staging/upload – upload video to staging (multipart: file + tmdbId, title). Response is NDJSON with progress.
-router.post('/upload', validateToken, validateAdmin, upload.single('file'), async (req, res) => {
-  const tmpPath = req.file?.path;
+// POST /api/staging/upload – stream multipart file directly to GridFS (no temp file). Response is NDJSON with progress.
+// Uses validateStagingAuth so both browser (JWT) and downloader (STAGING_SERVICE_TOKEN) can call it.
+router.post('/upload', validateStagingAuth, validateAdmin, (req, res, next) => {
+  res.setHeader('Content-Type', 'application/x-ndjson');
+  res.setHeader('Transfer-Encoding', 'chunked');
+  res.status(201);
+  req._stagingSendLine = (obj) => res.write(JSON.stringify(obj) + '\n');
+  next();
+}, uploadStream.single('file'), async (req, res) => {
   const logLines = [];
   try {
-    // — Validate request
     if (!req.file) {
+      res.setHeader('Content-Type', 'application/json');
       return res.status(400).json({ success: false, message: 'No video file provided' });
     }
-    const filename = req.file.originalname || req.file.filename;
+    if (req.file.uploadError) {
+      req._stagingSendLine({ stage: 'error', message: req.file.uploadError });
+      res.end();
+      logLines.push(`Staging upload failed: ${req.file.uploadError}`);
+      return;
+    }
+    const filename = req.file.originalname || req.file.filename || 'video.mp4';
     logLines.push(`Staging upload started: ${filename}`);
-    const tmdbId = req.body.tmdbId != null ? Number(req.body.tmdbId) : null;
-    const title = req.body.title != null ? String(req.body.title) : '';
-    const posterPath = req.body.poster_path != null ? String(req.body.poster_path) : null;
-
-    // — Set up chunked NDJSON response
-    res.setHeader('Content-Type', 'application/x-ndjson');
-    res.setHeader('Transfer-Encoding', 'chunked');
-    res.status(201);
-    const sendLine = (obj) => res.write(JSON.stringify(obj) + '\n');
-
-    // — Stream file to GridFS and create staging doc (with progress callbacks)
-    logLines.push('Creating read stream and writing to GridFS…');
-    const readStream = fs.createReadStream(req.file.path);
-    const result = await createStagingVideoWithProgress(
-      {
-        readStream,
-        mimetype: req.file.mimetype,
-        originalname: req.file.originalname || req.file.filename || 'video.mp4',
-        size: req.file.size,
-        tmdbId,
-        title,
-        posterPath,
-      },
-      (percent) => sendLine({ stage: 'writing', progress: percent })
-    );
-
-    // — Send success line and close response
-    sendLine({ stage: 'done', progress: 100, ...result, message: 'Video added to staging' });
+    const result = { stage: 'done', progress: 100, stagingId: req.file.stagingId, gridFsFileId: req.file.gridFsFileId, message: 'Video added to staging' };
+    req._stagingSendLine(result);
     res.end();
-    const sizeMb = (req.file.size / (1024 * 1024)).toFixed(2);
-    logLines.push(`Staging upload done: ${filename} (tmdbId: ${tmdbId ?? '—'}, title: ${title || '—'}, ${sizeMb} MB), stagingId: ${result.stagingId}`);
+    const sizeMb = ((req.file.size || 0) / (1024 * 1024)).toFixed(2);
+    logLines.push(`Staging upload done: ${filename} (${sizeMb} MB), stagingId: ${req.file.stagingId}`);
   } catch (err) {
     logLines.push(`Staging upload failed: ${err?.message || err}`);
     if (!res.headersSent) {
@@ -159,7 +178,6 @@ router.post('/upload', validateToken, validateAdmin, upload.single('file'), asyn
     res.write(JSON.stringify({ stage: 'error', message: err.message || 'Upload failed' }) + '\n');
     res.end();
   } finally {
-    if (tmpPath) fs.promises.unlink(tmpPath).catch(() => {});
     if (logLines.length > 0) {
       await systemModel.appendLog('STAGING_PROCESS_LOG', logLines).catch(() => {});
     }
