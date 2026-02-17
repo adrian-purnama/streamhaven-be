@@ -5,8 +5,20 @@ const { getPosterUrl } = require('../helper/movietv.helper');
 const DownloadQueueModel = require('../model/downloadQueue.model');
 
 const router = express.Router();
+
+// -----------------------------------------------------------------------------
+// Config
+// -----------------------------------------------------------------------------
+
 const DOWNLOADER_URL = (process.env.DOWNLOADER_URL || '').replace(/\/$/, '');
 const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET || '';
+const START_NEXT_DELAY_MS = 10000;
+const DOWNLOADER_RETRY_ATTEMPTS = 3;
+const DOWNLOADER_RETRY_DELAY_MS = 2000;
+
+// -----------------------------------------------------------------------------
+// Webhook auth (Python must send X-Webhook-Secret)
+// -----------------------------------------------------------------------------
 
 function checkWebhookSecret(req, res, next) {
   const secret = req.headers['x-webhook-secret'] || req.body?.webhookSecret;
@@ -17,43 +29,70 @@ function checkWebhookSecret(req, res, next) {
   next();
 }
 
-const START_NEXT_DELAY_MS = 10000;
+// -----------------------------------------------------------------------------
+// Helper: start next waiting job (call Python downloader). Used by POST /process/start and by webhooks.
+// On error: job is set to failed with errorMessage; no automatic retry of the same job (frontend can "Process waiting" again).
+// -----------------------------------------------------------------------------
 
-/** Pick next waiting job, set to downloading, call Python. Returns started job or null. Used by POST /process/start and by webhooks to auto-continue. */
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 async function startNextWaitingJob() {
   const next = await DownloadQueueModel.findOne({ status: 'waiting' }).sort({ createdAt: 1 }).lean();
   if (!next) {
     console.log('[download-queue] startNextWaitingJob: no waiting job');
     return null;
   }
+
   const jobId = next.jobId || next._id.toString();
   console.log('[download-queue] startNextWaitingJob: starting', jobId, next.title);
   await DownloadQueueModel.updateOne({ _id: next._id }, { $set: { jobId, status: 'downloading' } });
+
   if (!DOWNLOADER_URL) {
-    await DownloadQueueModel.updateOne({ _id: next._id }, { $set: { status: 'failed', errorMessage: 'DOWNLOADER_URL not set' } });
+    await DownloadQueueModel.updateOne(
+      { _id: next._id },
+      { $set: { status: 'failed', errorMessage: 'DOWNLOADER_URL not set' } }
+    );
     console.log('[download-queue] startNextWaitingJob: DOWNLOADER_URL not set');
     return null;
   }
+
   const url = `${DOWNLOADER_URL}/download`;
   const body = { jobId, title: next.title };
   if (next.tmdbId != null) body.tmdbId = next.tmdbId;
   if (next.poster_path) body.poster_path = next.poster_path;
-  try {
-    await axios.post(url, body, { timeout: 5000 });
-    console.log('[download-queue] startNextWaitingJob: downloader accepted', jobId);
-  } catch (err) {
-    console.log('[download-queue] startNextWaitingJob: downloader failed', err.message);
-    await DownloadQueueModel.updateOne(
-      { _id: next._id },
-      { $set: { status: 'failed', errorMessage: err.message || 'Downloader call failed' } }
-    );
-    return null;
+
+  let lastError;
+  for (let attempt = 1; attempt <= DOWNLOADER_RETRY_ATTEMPTS; attempt++) {
+    try {
+      await axios.post(url, body, { timeout: 5000 });
+      console.log('[download-queue] startNextWaitingJob: downloader accepted', jobId);
+      return await DownloadQueueModel.findById(next._id).lean();
+    } catch (err) {
+      lastError = err;
+      const status = err.response?.status;
+      const isRetryable = status === 503 || status === 502 || status === 504 || err.code === 'ECONNRESET' || err.code === 'ETIMEDOUT';
+      if (isRetryable && attempt < DOWNLOADER_RETRY_ATTEMPTS) {
+        console.log('[download-queue] startNextWaitingJob: attempt', attempt, 'failed', err.message, '- retrying in', DOWNLOADER_RETRY_DELAY_MS, 'ms');
+        await sleep(DOWNLOADER_RETRY_DELAY_MS);
+      } else {
+        break;
+      }
+    }
   }
-  return await DownloadQueueModel.findById(next._id).lean();
+
+  const errorMessage = lastError?.response?.data?.message || lastError?.message || 'Downloader call failed';
+  console.log('[download-queue] startNextWaitingJob: downloader failed', errorMessage);
+  await DownloadQueueModel.updateOne(
+    { _id: next._id },
+    { $set: { status: 'failed', errorMessage } }
+  );
+  return null;
 }
 
 // -----------------------------------------------------------------------------
-// Queue API (admin)
+// GET / — List queue (optional ?status=, ?limit=, ?skip=)
 // -----------------------------------------------------------------------------
 
 router.get('/', validateToken, validateAdmin, async (req, res) => {
@@ -74,6 +113,10 @@ router.get('/', validateToken, validateAdmin, async (req, res) => {
   }
 });
 
+// -----------------------------------------------------------------------------
+// POST / — Add item to queue (body: title, tmdbId?, poster_path?, year?)
+// -----------------------------------------------------------------------------
+
 router.post('/', validateToken, validateAdmin, async (req, res) => {
   try {
     const { title, tmdbId, poster_path, year } = req.body || {};
@@ -93,6 +136,10 @@ router.post('/', validateToken, validateAdmin, async (req, res) => {
   }
 });
 
+// -----------------------------------------------------------------------------
+// DELETE /:id — Remove item (only if pending or waiting; not while downloading/uploading)
+// -----------------------------------------------------------------------------
+
 router.delete('/:id', validateToken, validateAdmin, async (req, res) => {
   try {
     const doc = await DownloadQueueModel.findById(req.params.id).lean();
@@ -100,13 +147,16 @@ router.delete('/:id', validateToken, validateAdmin, async (req, res) => {
     if (doc.status === 'downloading' || doc.status === 'uploading') {
       return res.status(400).json({ success: false, message: 'Cannot delete while downloading or uploading' });
     }
-    // pending and waiting can be deleted
     await DownloadQueueModel.deleteOne({ _id: req.params.id });
     return res.json({ success: true, data: doc });
   } catch (err) {
     return res.status(500).json({ success: false, message: err.message });
   }
 });
+
+// -----------------------------------------------------------------------------
+// GET /job/:jobId — Get single job by jobId (for polling progress)
+// -----------------------------------------------------------------------------
 
 router.get('/job/:jobId', validateToken, validateAdmin, async (req, res) => {
   try {
@@ -119,7 +169,10 @@ router.get('/job/:jobId', validateToken, validateAdmin, async (req, res) => {
   }
 });
 
-/** Move all pending → waiting (assign jobId to each). Does not call Python. */
+// -----------------------------------------------------------------------------
+// POST /process — Move all pending → waiting (assign jobId to each). Does not call Python.
+// -----------------------------------------------------------------------------
+
 router.post('/process', validateToken, validateAdmin, async (req, res) => {
   try {
     const pending = await DownloadQueueModel.find({ status: 'pending' }).sort({ createdAt: 1 }).lean();
@@ -135,7 +188,10 @@ router.post('/process', validateToken, validateAdmin, async (req, res) => {
   }
 });
 
-/** Pick next waiting → downloading, call Python downloader. Also used by webhooks to auto-start next. */
+// -----------------------------------------------------------------------------
+// POST /process/start — Start next waiting job (call downloader). Returns 404 if no waiting jobs.
+// -----------------------------------------------------------------------------
+
 router.post('/process/start', validateToken, validateAdmin, async (req, res) => {
   try {
     const started = await startNextWaitingJob();
@@ -150,9 +206,10 @@ router.post('/process/start', validateToken, validateAdmin, async (req, res) => 
 });
 
 // -----------------------------------------------------------------------------
-// Webhooks (called by Python; require X-Webhook-Secret)
+// Webhooks (called by Python; require X-Webhook-Secret). No retry from backend; Python may retry.
 // -----------------------------------------------------------------------------
 
+// POST /webhook/download-done — Job finished downloading, now uploading to staging
 router.post('/webhook/download-done', checkWebhookSecret, express.json(), async (req, res) => {
   try {
     const { jobId } = req.body || {};
@@ -169,6 +226,7 @@ router.post('/webhook/download-done', checkWebhookSecret, express.json(), async 
   }
 });
 
+// POST /webhook/upload-progress — Chunk/writing progress (chunkIndex, totalChunks, progress?)
 router.post('/webhook/upload-progress', checkWebhookSecret, express.json(), async (req, res) => {
   try {
     const { jobId, chunkIndex, totalChunks, progress } = req.body || {};
@@ -190,6 +248,7 @@ router.post('/webhook/upload-progress', checkWebhookSecret, express.json(), asyn
   }
 });
 
+// POST /webhook/upload-done — Job finished uploading to staging; schedule next waiting job after delay
 router.post('/webhook/upload-done', checkWebhookSecret, express.json(), async (req, res) => {
   try {
     const { jobId, stagingId } = req.body || {};
@@ -209,6 +268,7 @@ router.post('/webhook/upload-done', checkWebhookSecret, express.json(), async (r
   }
 });
 
+// POST /webhook/failed — Job failed; schedule next waiting job after delay
 router.post('/webhook/failed', checkWebhookSecret, express.json(), async (req, res) => {
   try {
     const { jobId, errorMessage } = req.body || {};

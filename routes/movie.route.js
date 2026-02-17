@@ -1,6 +1,6 @@
 const express = require('express');
 const mongoose = require('mongoose');
-const { syncNowPlayingMovies, syncPopularMovies, syncTopRatedMovies, shouldSync, getLastSync, setLastSync, formatMediaImageUrls, formatMultiSearchResult, fetchMovieDetails, fetchMovieByImdbId, fetchMovieByTmdbId, saveMovieToCache } = require('../helper/tmdb.helper');
+const { syncNowPlayingMovies, syncPopularMovies, syncTopRatedMovies, shouldSync, getLastSync, setLastSync, syncOnTheAirTv, syncPopularTv, syncTopRatedTv, shouldSyncTv, setLastSyncTv, syncMovieGenres, syncTvGenres, formatMediaImageUrls, formatMultiSearchResult, fetchMovieDetails, fetchMovieByImdbId, fetchMovieByTmdbId, saveMovieToCache } = require('../helper/tmdb.helper');
 const { getAllMovieServers } = require('../helper/movietv.helper');
 const { validateAdmin, validateToken, optionalValidateToken } = require('../helper/validate.helper');
 const MediaModel = require('../model/media.model');
@@ -216,6 +216,24 @@ router.get('/:id', optionalValidateToken, async (req, res) => {
 router.get('/', async (req, res) => {
     const { category } = req.query;
     try {
+        // Once a day: sync movies, TV, and genres when this endpoint is hit
+        if (shouldSync() || shouldSyncTv()) {
+            if (shouldSync()) {
+                await syncNowPlayingMovies();
+                await syncPopularMovies();
+                await syncTopRatedMovies();
+                setLastSync(Date.now());
+            }
+            if (shouldSyncTv()) {
+                await syncOnTheAirTv();
+                await syncPopularTv();
+                await syncTopRatedTv();
+                setLastSyncTv(Date.now());
+            }
+            await syncMovieGenres();
+            await syncTvGenres();
+        }
+
         if (!category) {
             const [top_pick, popular, now_playing, top_rated] = await Promise.all([
                 MediaModel.find({ category: 'top_pick', mediaType: 'movie' }).sort({ popularity: -1 }).lean(),
