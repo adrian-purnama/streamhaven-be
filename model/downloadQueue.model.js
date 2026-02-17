@@ -1,0 +1,71 @@
+const mongoose = require('mongoose');
+const { Schema } = mongoose;
+
+/**
+ * Queue of videos to be downloaded (torrent) then uploaded to staging.
+ * Backend processes one by one: calls Python downloader with jobId; Python calls webhooks on download-done and upload-done.
+ */
+const downloadQueueSchema = new Schema(
+  {
+    /** Search title for torrent (e.g. "World War Z 2013") */
+    title: {
+      type: String,
+      required: true,
+      index: true,
+    },
+    /** Job id sent to Python; used in webhooks to identify this queue item. Omit when pending so sparse unique index allows many. */
+    jobId: {
+      type: String,
+      default: undefined,
+      index: true,
+      unique: true,
+      sparse: true,
+    },
+    /**
+     * pending = in queue, not yet selected
+     * waiting = selected by "Process next", waiting to be started
+     * downloading = Python is downloading
+     * uploading = download done, Python is uploading to staging
+     * done = uploaded to staging (stagingId set)
+     * failed = error (errorMessage set)
+     */
+    status: {
+      type: String,
+      enum: ['pending', 'waiting', 'downloading', 'uploading', 'done', 'failed'],
+      default: 'pending',
+      index: true,
+    },
+    /** StagingVideo _id after successful upload */
+    stagingId: {
+      type: String,
+      default: null,
+    },
+    /** Upload progress: current chunk (1-based) when status === 'uploading' */
+    uploadChunkIndex: { type: Number, default: null },
+    /** Total chunks for staging upload */
+    uploadChunkTotal: { type: Number, default: null },
+    /** Writing-to-DB progress 0-100 when last chunk is being processed */
+    uploadProgress: { type: Number, default: null },
+    /** Error message when status === 'failed' */
+    errorMessage: {
+      type: String,
+      default: null,
+    },
+    /** Optional TMDB id for staging metadata */
+    tmdbId: {
+      type: Number,
+      default: null,
+    },
+    poster_path: {
+      type: String,
+      default: null,
+    },
+    year: {
+      type: Number,
+      default: null,
+    },
+  },
+  { timestamps: true }
+);
+
+module.exports = mongoose.model('DownloadQueue', downloadQueueSchema);

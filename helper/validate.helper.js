@@ -96,4 +96,21 @@ const validateAdmin = (req, res, next) => {
   next();
 };
 
-module.exports = { validateToken, validateAdmin, optionalValidateToken };
+/**
+ * For staging upload: accept either a valid JWT (Bearer) or the long-lived STAGING_SERVICE_TOKEN.
+ * Use so the downloader can run unattended with STAGING_UPLOAD_TOKEN in its .env (same value as STAGING_SERVICE_TOKEN here).
+ * Sets req.user (with isAdmin: true when service token is used) and req.userId; then use validateAdmin as usual.
+ */
+const STAGING_SERVICE_TOKEN = process.env.STAGING_SERVICE_TOKEN || '';
+const validateStagingAuth = async (req, res, next) => {
+  const authHeader = req.headers.authorization;
+  const token = authHeader && authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
+  if (token && STAGING_SERVICE_TOKEN && token === STAGING_SERVICE_TOKEN) {
+    req.user = { isAdmin: true };
+    req.userId = null;
+    return next();
+  }
+  return validateToken(req, res, next);
+};
+
+module.exports = { validateToken, validateAdmin, optionalValidateToken, validateStagingAuth };

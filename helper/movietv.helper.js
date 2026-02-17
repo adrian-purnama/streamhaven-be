@@ -1,5 +1,16 @@
 const ServerModel = require('../model/server.model');
 const UploadedVideoModel = require('../model/uploadedVideo.model');
+const { tmdbImageUrl } = require('./tmdb.helper');
+
+/**
+ * Full TMDB poster URL for a poster_path (e.g. from download queue or staging).
+ * @param {string | null | undefined} posterPath - TMDB path (e.g. "/abc.jpg")
+ * @param {string} [size='w200'] - Size segment (e.g. "w200", "w500")
+ * @returns {string | null}
+ */
+function getPosterUrl(posterPath, size = 'w200') {
+  return tmdbImageUrl(posterPath, size) || null;
+}
 
 /**
  * Build watch URL from server base link + watchPathPattern.
@@ -131,6 +142,7 @@ async function getAllMyPlayerServers(slug) {
 }
 
 module.exports = {
+  getPosterUrl,
   buildWatchUrl,
   formatMovie,
   formatTv,

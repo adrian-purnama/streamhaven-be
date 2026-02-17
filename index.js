@@ -29,6 +29,7 @@ const abyssRoutes = require('./routes/data entry/abyss.route.js');
 const stagingRoutes = require('./routes/staging.route.js');
 const uploadedVideoRoutes = require('./routes/uploadedVideo.route.js');
 const logRoutes = require('./routes/data entry/log.route.js');
+const downloadQueueRoutes = require('./routes/downloadQueue.route.js');
 
 // --------------- Security headers ---------------
 app.use(helmet({
@@ -53,14 +54,14 @@ app.use(cors({
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Webhook-Secret'],
 }));
 
 // --------------- Rate limiting ---------------
 // Global limiter: 200 requests per minute per IP
 const globalLimiter = rateLimit({
   windowMs: 60 * 1000,       // 1 minute
-  max: 200,
+  max: 1000,
   standardHeaders: true,      // Return rate limit info in the `RateLimit-*` headers
   legacyHeaders: false,       // Disable `X-RateLimit-*` headers
   message: { success: false, message: 'Too many requests, please try again later.' },
@@ -158,6 +159,7 @@ app.use('/api/abyss', abyssRoutes)
 app.use('/api/staging', stagingRoutes)
 app.use('/api/uploaded-videos', uploadedVideoRoutes)
 app.use('/api/logs', logRoutes)
+app.use('/api/download-queue', downloadQueueRoutes)
 
 app.listen(PORT, () => {
     console.log(`Server is running on port ${PORT}`);

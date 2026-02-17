@@ -6,7 +6,7 @@ const path = require('path');
 const { pipeline } = require('stream');
 const { promisify } = require('util');
 const pipelineAsync = promisify(pipeline);
-const { validateToken, validateAdmin } = require('../helper/validate.helper');
+const { validateToken, validateAdmin, validateStagingAuth } = require('../helper/validate.helper');
 const { createStagingVideoWithProgress, listStaging, getStagingVideoStream, updateStaging, deleteStaging } = require('../helper/stagingVideo.helper');
 const { formatMediaImageUrls } = require('../helper/tmdb.helper');
 const { getAccountInfo, checkUploadQuota, uploadVideoToAbyss, getSlugStatus } = require('../helper/abyss.helper');
@@ -167,7 +167,7 @@ router.post('/upload', validateToken, validateAdmin, upload.single('file'), asyn
 });
 
 // POST /api/staging/upload-chunk – append each chunk to one file (no reassembly in RAM). Last chunk triggers DB write + NDJSON.
-router.post('/upload-chunk', validateToken, validateAdmin, uploadChunk.single('file'), async (req, res) => {
+router.post('/upload-chunk', validateStagingAuth, validateAdmin, uploadChunk.single('file'), async (req, res) => {
   const uploadId = req.body.uploadId != null ? String(req.body.uploadId).trim() : null;
   const chunkIndex = req.body.chunkIndex != null ? parseInt(req.body.chunkIndex, 10) : NaN;
   const totalChunks = req.body.totalChunks != null ? parseInt(req.body.totalChunks, 10) : NaN;
@@ -316,7 +316,7 @@ router.get('/process-status', validateToken, validateAdmin, (req, res) => {
 });
 
 // GET /api/staging/upload-status/:uploadId – upload-to-staging progress for this id (for polling after reload)
-router.get('/upload-status/:uploadId', validateToken, validateAdmin, (req, res) => {
+router.get('/upload-status/:uploadId', validateStagingAuth, validateAdmin, (req, res) => {
   const state = getUploadState();
   if (state.uploadId !== req.params.uploadId) {
     return res.status(404).json({ success: false, message: 'Upload not found or no longer tracked.' });
