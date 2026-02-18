@@ -1,3 +1,4 @@
+const http = require('http');
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
@@ -7,10 +8,14 @@ const systemModel = require('./model/system.model');
 const MediaModel = require('./model/media.model');
 const passport = require("./helper/passport.helper");
 const session = require('express-session');
+const { attachDownloadQueueProgressWs } = require('./ws/downloadQueueProgress');
 require('dotenv').config();
 
 const app = express();
+const server = http.createServer(app);
 const PORT = process.env.PORT || 5000;
+
+attachDownloadQueueProgressWs(server);
 
 const authRoutes = require('./routes/auth.route.js');
 const systemRoutes = require('./routes/data entry/system.route.js');
@@ -161,6 +166,6 @@ app.use('/api/uploaded-videos', uploadedVideoRoutes)
 app.use('/api/logs', logRoutes)
 app.use('/api/download-queue', downloadQueueRoutes)
 
-app.listen(PORT, () => {
-    console.log(`Server is running on port ${PORT}`);
+server.listen(PORT, () => {
+  console.log(`Server is running on port ${PORT} (HTTP + WS /ws/download-queue/progress)`);
 });

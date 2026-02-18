@@ -36,6 +36,36 @@ router.get('/', validateToken, validateAdmin, async (req, res) => {
   }
 });
 
+// POST /api/uploaded-videos – create or update mapping by abyssSlug (for unmapped Abyss resources)
+router.post('/', validateToken, validateAdmin, async (req, res) => {
+  try {
+    const { abyssSlug, externalId, title, poster_path: posterPath } = req.body;
+    const slug = abyssSlug == null ? '' : String(abyssSlug).trim();
+    if (!slug) {
+      return res.status(400).json({ success: false, message: 'abyssSlug required' });
+    }
+    const update = {};
+    if (externalId !== undefined) {
+      const tid = externalId === null || externalId === '' ? null : Number(externalId);
+      if (tid !== null && (Number.isNaN(tid) || tid < 1)) {
+        return res.status(400).json({ success: false, message: 'externalId must be a positive number or null' });
+      }
+      update.externalId = tid;
+    }
+    if (title !== undefined) update.title = title === null ? '' : String(title).trim();
+    if (posterPath !== undefined) update.poster_path = posterPath === null || posterPath === '' ? null : String(posterPath).trim();
+    const doc = await UploadedVideoModel.findOneAndUpdate(
+      { abyssSlug: slug },
+      { $set: { ...update, abyssSlug: slug } },
+      { new: true, upsert: true }
+    ).lean();
+    const withPoster = formatMediaImageUrls(doc);
+    return res.json({ success: true, data: withPoster });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: err.message || 'Failed to create/update mapping' });
+  }
+});
+
 // PATCH /api/uploaded-videos/:id – update mapping (externalId/tmdb id, title, poster_path)
 router.patch('/:id', validateToken, validateAdmin, async (req, res) => {
   try {

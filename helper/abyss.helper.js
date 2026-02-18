@@ -185,6 +185,55 @@ async function deleteAbyssVideoById(slug) {
   }
 }
 
+/**
+ * Delete a video from Abyss by slug.
+ * @returns {{ success: boolean, message?: string }}
+ */
+async function getResources() {
+  const token = await getAbyssToken();
+  const response = await axios.get(`${AbyssBaseURL}/v1/resources`, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+      accept: 'application/json',
+    },
+  });
+  return response.data;
+}
+
+
+/**
+ * PUT (rename) a resource on Abyss by slug.
+ * @param {string} slug - Abyss file/resource id
+ * @param {string} newFileName - New file name to set
+ * @returns {{ success: boolean, data?: object, message?: string }}
+ */
+async function putResource(slug, newFileName) {
+  try {
+    const token = await getAbyssToken();
+    const response = await axios.put(
+      `${AbyssBaseURL}/v1/files/${slug}`,
+      { name: newFileName },
+      {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          accept: 'application/json',
+          'Content-Type': 'application/json',
+        },
+      }
+    );
+    if (response.status >= 200 && response.status < 300) {
+      return { success: true, data: response.data };
+    }
+    return { success: false, message: response.data?.msg ?? response.data?.message ?? response.statusText ?? 'Rename failed' };
+  } catch (err) {
+    return { success: false, message: err?.message ?? 'Rename failed' };
+  }
+}
+
+
+
+
+
 module.exports = {
   getAbyssToken,
   getAccountInfo,
@@ -192,4 +241,6 @@ module.exports = {
   uploadVideoToAbyss,
   getSlugStatus,
   deleteAbyssVideoById,
+  getResources,
+  putResource,
 };

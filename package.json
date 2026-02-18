@@ -25,6 +25,7 @@
     "passport": "^0.7.0",
     "passport-google-oauth20": "^2.0.0",
     "passport-oauth": "^1.0.0",
-    "pizzip": "^3.2.0"
+    "pizzip": "^3.2.0",
+    "ws": "^8.19.0"
   }
 }

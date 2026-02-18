@@ -17,8 +17,12 @@ const START_NEXT_DELAY_MS = 10000;
 const DOWNLOADER_RETRY_ATTEMPTS = 3;
 const DOWNLOADER_RETRY_DELAY_MS = 2000;
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 // -----------------------------------------------------------------------------
-// Webhook auth (Python must send X-Webhook-Secret)
+// Webhook auth — downloader must send X-Webhook-Secret (or body.webhookSecret)
 // -----------------------------------------------------------------------------
 
 function checkWebhookSecret(req, res, next) {
@@ -31,15 +35,13 @@ function checkWebhookSecret(req, res, next) {
 }
 
 // -----------------------------------------------------------------------------
-// Helper: start next waiting job (call Python downloader). Used by POST /process/start and by webhooks.
-// On error: job is set to failed with errorMessage; no automatic retry of the same job (frontend can "Process waiting" again).
+// startNextWaitingJob — pick next waiting job, call downloader, mark failed on error.
+// Used by POST /process/start and by webhooks (upload-done, failed). No auto-retry
+// of the same job; frontend can "Process waiting" again.
 // -----------------------------------------------------------------------------
 
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
 async function startNextWaitingJob() {
+  // — Pick next job (oldest waiting)
   const next = await DownloadQueueModel.findOne({ status: 'waiting' }).sort({ createdAt: 1 }).lean();
   if (!next) {
     console.log('[download-queue] startNextWaitingJob: no waiting job');
@@ -47,14 +49,18 @@ async function startNextWaitingJob() {
   }
 
   const jobId = next.jobId || next._id.toString();
+
+  // — Claim "one job running" lock; skip if another job already running
   if (!tryStartDownloadJob(jobId)) {
     console.log('[download-queue] startNextWaitingJob: job already running, skipping');
     return null;
   }
 
+  // — Mark job as downloading in DB
   console.log('[download-queue] startNextWaitingJob: starting', jobId, next.title);
   await DownloadQueueModel.updateOne({ _id: next._id }, { $set: { jobId, status: 'downloading' } });
 
+  // — If no downloader URL, mark job failed and release lock
   if (!DOWNLOADER_URL) {
     endDownloadJob();
     await DownloadQueueModel.updateOne(
@@ -65,14 +71,17 @@ async function startNextWaitingJob() {
     return null;
   }
 
+  // — Build request to downloader POST /download
   const url = `${DOWNLOADER_URL}/download`;
   const body = { jobId, title: next.title };
   if (next.tmdbId != null) body.tmdbId = next.tmdbId;
   if (next.poster_path) body.poster_path = next.poster_path;
 
+  // — Call downloader with retries (503/502/504/ECONNRESET/ETIMEDOUT → retry)
   let lastError;
   for (let attempt = 1; attempt <= DOWNLOADER_RETRY_ATTEMPTS; attempt++) {
     try {
+      // refetch with timeout 5000 for clear job in downloader
       await axios.post(url, body, { timeout: 5000 });
       console.log('[download-queue] startNextWaitingJob: downloader accepted', jobId);
       return await DownloadQueueModel.findById(next._id).lean();
@@ -89,6 +98,7 @@ async function startNextWaitingJob() {
     }
   }
 
+  // — All attempts failed: release lock, mark job failed, return null
   const errorMessage = lastError?.response?.data?.message || lastError?.message || 'Downloader call failed';
   console.log('[download-queue] startNextWaitingJob: downloader failed', errorMessage);
   endDownloadJob();
@@ -105,6 +115,7 @@ async function startNextWaitingJob() {
 
 router.get('/', validateToken, validateAdmin, async (req, res) => {
   try {
+    // await markStuckDownloadQueueJobs();
     const status = req.query.status?.trim() || null;
     const limit = Math.min(parseInt(req.query.limit, 10) || 50, 100);
     const skip = Math.max(0, parseInt(req.query.skip, 10) || 0);
@@ -178,7 +189,7 @@ router.get('/job/:jobId', validateToken, validateAdmin, async (req, res) => {
 });
 
 // -----------------------------------------------------------------------------
-// POST /process — Move all pending → waiting (assign jobId to each). Does not call Python.
+// POST /process — Move all pending → waiting (assign jobId to each)
 // -----------------------------------------------------------------------------
 
 router.post('/process', validateToken, validateAdmin, async (req, res) => {
