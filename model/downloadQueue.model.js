@@ -13,14 +13,6 @@ const downloadQueueSchema = new Schema(
       required: true,
       index: true,
     },
-    /** Job id sent to Python; used in webhooks to identify this queue item. Omit when pending so sparse unique index allows many. */
-    jobId: {
-      type: String,
-      default: undefined,
-      index: true,
-      unique: true,
-      sparse: true,
-    },
     /**
      * pending = in queue, not yet selected
      * waiting = selected by "Process next", waiting to be started
@@ -29,9 +21,14 @@ const downloadQueueSchema = new Schema(
      * done = uploaded to staging (stagingId set)
      * failed = error (errorMessage set)
      */
+    quality : {
+      type: String,
+      enum: ['low', 'medium', 'high'],
+      default: 'high',
+    },
     status: {
       type: String,
-      enum: ['pending', 'waiting', 'downloading', 'uploading', 'done', 'failed'],
+      enum: ['pending', 'waiting', 'searching', 'downloading', 'uploading', 'done', 'failed'],
       default: 'pending',
       index: true,
     },

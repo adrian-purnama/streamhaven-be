@@ -143,46 +143,46 @@ router.get('/', validateToken, validateAdmin, async (req, res) => {
 
 // POST /api/staging/upload – stream multipart file directly to GridFS (no temp file). Response is NDJSON with progress.
 // Uses validateStagingAuth so both browser (JWT) and downloader (STAGING_SERVICE_TOKEN) can call it.
-router.post('/upload', validateStagingAuth, validateAdmin, (req, res, next) => {
-  res.setHeader('Content-Type', 'application/x-ndjson');
-  res.setHeader('Transfer-Encoding', 'chunked');
-  res.status(201);
-  req._stagingSendLine = (obj) => res.write(JSON.stringify(obj) + '\n');
-  next();
-}, uploadStream.single('file'), async (req, res) => {
-  const logLines = [];
-  try {
-    if (!req.file) {
-      res.setHeader('Content-Type', 'application/json');
-      return res.status(400).json({ success: false, message: 'No video file provided' });
-    }
-    if (req.file.uploadError) {
-      req._stagingSendLine({ stage: 'error', message: req.file.uploadError });
-      res.end();
-      logLines.push(`Staging upload failed: ${req.file.uploadError}`);
-      return;
-    }
-    const filename = req.file.originalname || req.file.filename || 'video.mp4';
-    logLines.push(`Staging upload started: ${filename}`);
-    const result = { stage: 'done', progress: 100, stagingId: req.file.stagingId, gridFsFileId: req.file.gridFsFileId, message: 'Video added to staging' };
-    req._stagingSendLine(result);
-    res.end();
-    const sizeMb = ((req.file.size || 0) / (1024 * 1024)).toFixed(2);
-    logLines.push(`Staging upload done: ${filename} (${sizeMb} MB), stagingId: ${req.file.stagingId}`);
-  } catch (err) {
-    logLines.push(`Staging upload failed: ${err?.message || err}`);
-    if (!res.headersSent) {
-      res.setHeader('Content-Type', 'application/json');
-      return res.status(400).json({ success: false, message: err.message || 'Upload failed' });
-    }
-    res.write(JSON.stringify({ stage: 'error', message: err.message || 'Upload failed' }) + '\n');
-    res.end();
-  } finally {
-    if (logLines.length > 0) {
-      await systemModel.appendLog('STAGING_PROCESS_LOG', logLines).catch(() => {});
-    }
-  }
-});
+// router.post('/upload', validateStagingAuth, validateAdmin, (req, res, next) => {
+//   res.setHeader('Content-Type', 'application/x-ndjson');
+//   res.setHeader('Transfer-Encoding', 'chunked');
+//   res.status(201);
+//   req._stagingSendLine = (obj) => res.write(JSON.stringify(obj) + '\n');
+//   next();
+// }, uploadStream.single('file'), async (req, res) => {
+//   const logLines = [];
+//   try {
+//     if (!req.file) {
+//       res.setHeader('Content-Type', 'application/json');
+//       return res.status(400).json({ success: false, message: 'No video file provided' });
+//     }
+//     if (req.file.uploadError) {
+//       req._stagingSendLine({ stage: 'error', message: req.file.uploadError });
+//       res.end();
+//       logLines.push(`Staging upload failed: ${req.file.uploadError}`);
+//       return;
+//     }
+//     const filename = req.file.originalname || req.file.filename || 'video.mp4';
+//     logLines.push(`Staging upload started: ${filename}`);
+//     const result = { stage: 'done', progress: 100, stagingId: req.file.stagingId, gridFsFileId: req.file.gridFsFileId, message: 'Video added to staging' };
+//     req._stagingSendLine(result);
+//     res.end();
+//     const sizeMb = ((req.file.size || 0) / (1024 * 1024)).toFixed(2);
+//     logLines.push(`Staging upload done: ${filename} (${sizeMb} MB), stagingId: ${req.file.stagingId}`);
+//   } catch (err) {
+//     logLines.push(`Staging upload failed: ${err?.message || err}`);
+//     if (!res.headersSent) {
+//       res.setHeader('Content-Type', 'application/json');
+//       return res.status(400).json({ success: false, message: err.message || 'Upload failed' });
+//     }
+//     res.write(JSON.stringify({ stage: 'error', message: err.message || 'Upload failed' }) + '\n');
+//     res.end();
+//   } finally {
+//     if (logLines.length > 0) {
+//       await systemModel.appendLog('STAGING_PROCESS_LOG', logLines).catch(() => {});
+//     }
+//   }
+// });
 
 // POST /api/staging/upload-chunk – append each chunk to one file (no reassembly in RAM). Last chunk triggers DB write + NDJSON.
 router.post('/upload-chunk', validateStagingAuth, validateAdmin, uploadChunk.single('file'), async (req, res) => {

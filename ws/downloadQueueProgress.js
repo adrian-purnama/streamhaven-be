@@ -25,7 +25,7 @@ async function buildPayload() {
     if (!DOWNLOADER_URL) {
       return { phase: 'idle', download: {}, upload: {}, message: 'DOWNLOADER_URL not set' };
     }
-    const r = await axios.get(`${DOWNLOADER_URL}/progress`, { timeout: 5000 });
+    const r = await axios.get(`${DOWNLOADER_URL}/status`, { timeout: 5000 });
     const data = r.data || {};
     const jobId = data.jobId;
     if (jobId) {
