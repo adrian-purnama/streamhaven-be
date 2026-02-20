@@ -13,7 +13,7 @@ const { getPosterUrl } = require('../helper/movietv.helper');
 const { URL } = require('url');
 
 const DOWNLOADER_URL = (process.env.DOWNLOADER_URL || '').replace(/\/$/, '');
-const POLL_INTERVAL_MS = 2500;
+const POLL_INTERVAL_MS = 1000;
 
 /** @type {Set<import('ws').WebSocket>} */
 const clients = new Set();
