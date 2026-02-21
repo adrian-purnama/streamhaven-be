@@ -15,11 +15,11 @@ const ADMIN_EMAIL = process.env.ADMIN_EMAIL;
 
 // Public: branding (logo, app name, tagline, full logo) for the frontend
 router.get('/branding', async (req, res) => {
-    const doc = await system.findOne({}).select('appName logoUrl logoFullUrl tagLine').lean()
+    const doc = await system.findOne({}).select('appName logoUrl logoFullUrl tagLine openAdFreeRequest').lean()
     if (!doc) {
         return res.status(200).json({
             success: true,
-            data: { appName: 'Stream Haven', logoUrl: '', logoFullUrl: '', tagLine: '' },
+            data: { appName: 'Stream Haven', logoUrl: '', logoFullUrl: '', tagLine: '', openAdFreeRequest: false },
         })
     }
     return res.status(200).json({
@@ -29,6 +29,7 @@ router.get('/branding', async (req, res) => {
             logoUrl: doc.logoUrl || '',
             logoFullUrl: doc.logoFullUrl || '',
             tagLine: doc.tagLine || '',
+            openAdFreeRequest: Boolean(doc.openAdFreeRequest),
         },
     })
 })

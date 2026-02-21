@@ -52,6 +52,8 @@ const downloadQueueSchema = new Schema(
     tmdbId: {
       type: Number,
       default: null,
+      unique: true,
+      index: true,
     },
     poster_path: {
       type: String,
@@ -61,6 +63,18 @@ const downloadQueueSchema = new Schema(
       type: Number,
       default: null,
     },
+    requester : {
+      id : {
+        type : mongoose.Schema.Types.ObjectId,
+        ref : 'user',
+        required : false,
+      },
+      type : {
+        type : String,
+        enum : ['user', 'admin', 'guest'],
+        required : false,
+      }
+    }
   },
   { timestamps: true }
 );

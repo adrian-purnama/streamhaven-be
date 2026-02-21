@@ -22,6 +22,7 @@ router.get('/', validateToken, validateAdmin, async (req, res) => {
       .skip(skip)
       .limit(limit)
       .lean();
+    console.log(list);
     const total = await UploadedVideoModel.countDocuments(query);
     const listWithPoster = await Promise.all(
       list.map(async (doc) => {

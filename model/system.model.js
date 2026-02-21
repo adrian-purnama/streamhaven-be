@@ -29,6 +29,11 @@ const systemSchema = new mongoose.Schema({
         required : true,
         default : false
     },
+    openAdFreeRequest : {
+        type : Boolean,
+        required : true,
+        default : false
+    },
     logoUrl : {
         type : String,
         default : ''

@@ -110,6 +110,7 @@ const PREFERENCES_DEFAULTS = {
   showTopPickOnHome: true,
   showPosterTitle: false,
   showPromoTicker: true,
+  showAdFreeStatus: true,
 };
 const SAVE_BUTTON_POSITIONS = ['bottom_center', 'top_right', 'hidden'];
 
@@ -127,6 +128,7 @@ router.get('/me/preferences', async (req, res) => {
       showTopPickOnHome: typeof prefs.showTopPickOnHome === 'boolean' ? prefs.showTopPickOnHome : PREFERENCES_DEFAULTS.showTopPickOnHome,
       showPosterTitle: typeof prefs.showPosterTitle === 'boolean' ? prefs.showPosterTitle : PREFERENCES_DEFAULTS.showPosterTitle,
       showPromoTicker: typeof prefs.showPromoTicker === 'boolean' ? prefs.showPromoTicker : PREFERENCES_DEFAULTS.showPromoTicker,
+      showAdFreeStatus: typeof prefs.showAdFreeStatus === 'boolean' ? prefs.showAdFreeStatus : PREFERENCES_DEFAULTS.showAdFreeStatus,
     };
     return res.status(200).json({ success: true, data });
   } catch (err) {
@@ -156,6 +158,9 @@ router.patch('/me/preferences', async (req, res) => {
     if (body.showPromoTicker !== undefined) {
       updates['preferences.showPromoTicker'] = Boolean(body.showPromoTicker);
     }
+    if (body.showAdFreeStatus !== undefined) {
+      updates['preferences.showAdFreeStatus'] = Boolean(body.showAdFreeStatus);
+    }
     if (Object.keys(updates).length === 0) {
       const doc = await userModel.findById(req.userId).select('preferences').lean();
       const prefs = (doc && doc.preferences) || {};
@@ -165,6 +170,7 @@ router.patch('/me/preferences', async (req, res) => {
         showTopPickOnHome: typeof prefs.showTopPickOnHome === 'boolean' ? prefs.showTopPickOnHome : PREFERENCES_DEFAULTS.showTopPickOnHome,
         showPosterTitle: typeof prefs.showPosterTitle === 'boolean' ? prefs.showPosterTitle : PREFERENCES_DEFAULTS.showPosterTitle,
         showPromoTicker: typeof prefs.showPromoTicker === 'boolean' ? prefs.showPromoTicker : PREFERENCES_DEFAULTS.showPromoTicker,
+        showAdFreeStatus: typeof prefs.showAdFreeStatus === 'boolean' ? prefs.showAdFreeStatus : PREFERENCES_DEFAULTS.showAdFreeStatus,
       };
       return res.status(200).json({ success: true, data });
     }
@@ -182,6 +188,7 @@ router.patch('/me/preferences', async (req, res) => {
       showTopPickOnHome: typeof prefs.showTopPickOnHome === 'boolean' ? prefs.showTopPickOnHome : PREFERENCES_DEFAULTS.showTopPickOnHome,
       showPosterTitle: typeof prefs.showPosterTitle === 'boolean' ? prefs.showPosterTitle : PREFERENCES_DEFAULTS.showPosterTitle,
       showPromoTicker: typeof prefs.showPromoTicker === 'boolean' ? prefs.showPromoTicker : PREFERENCES_DEFAULTS.showPromoTicker,
+      showAdFreeStatus: typeof prefs.showAdFreeStatus === 'boolean' ? prefs.showAdFreeStatus : PREFERENCES_DEFAULTS.showAdFreeStatus,
     };
     return res.status(200).json({ success: true, data });
   } catch (err) {

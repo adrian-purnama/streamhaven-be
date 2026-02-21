@@ -1,6 +1,7 @@
 const express = require('express');
 const { tmdbApi } = require('../helper/api.helper');
 const { formatMediaImageUrls } = require('../helper/tmdb.helper');
+const { getDownloadStatuses } = require('../helper/movietv.helper');
 
 const router = express.Router();
 
@@ -21,11 +22,21 @@ async function discoverHandler(req, res) {
     if (!params.language) params.language = 'en-US';
     const response = await tmdbApi.get(`/discover/${type}`, { params });
     const data = response.data || {};
-    const results = (data.results || []).map(formatMediaImageUrls);
+    const rawResults = data.results || [];
+    const results = rawResults.map(formatMediaImageUrls);
+    let finalResults = results;
+    if (type === 'movie') {
+      const tmdbIds = rawResults.map((m) => m.id).filter(Boolean);
+      const statusMap = tmdbIds.length > 0 ? await getDownloadStatuses(tmdbIds) : new Map();
+      finalResults = results.map((m) => {
+        const id = m.externalId ?? m.id;
+        return { ...m, downloadStatus: id != null ? statusMap.get(Number(id)) ?? null : null };
+      });
+    }
     return res.status(200).json({
       success: true,
       data: {
-        results,
+        results: finalResults,
         page: data.page ?? 1,
         total_pages: data.total_pages ?? 0,
         total_results: data.total_results ?? 0,

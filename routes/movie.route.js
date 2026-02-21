@@ -1,7 +1,7 @@
 const express = require('express');
 const mongoose = require('mongoose');
 const { syncNowPlayingMovies, syncPopularMovies, syncTopRatedMovies, shouldSync, getLastSync, setLastSync, syncOnTheAirTv, syncPopularTv, syncTopRatedTv, shouldSyncTv, setLastSyncTv, syncMovieGenres, syncTvGenres, formatMediaImageUrls, formatMultiSearchResult, fetchMovieDetails, fetchMovieByImdbId, fetchMovieByTmdbId, saveMovieToCache } = require('../helper/tmdb.helper');
-const { getAllMovieServers } = require('../helper/movietv.helper');
+const { getAllMovieServers, getDownloadStatuses } = require('../helper/movietv.helper');
 const { validateAdmin, validateToken, optionalValidateToken } = require('../helper/validate.helper');
 const MediaModel = require('../model/media.model');
 const { tmdbApi } = require('../helper/api.helper');
@@ -43,7 +43,7 @@ router.get('/sync', async (req, res) => {
     });
 });
 
-router.get('/top-pick', validateToken, validateAdmin, async (req, res) => {
+router.get('/top-pick', async (req, res) => {
     const { imdb_id, tmdb_id } = req.query;
     try {
         const hasImdb = imdb_id != null && String(imdb_id).trim();
@@ -151,11 +151,18 @@ function paginatedCategoryHandler(tmdbSegment) {
             const page = Math.max(1, parseInt(req.query.page, 10) || 1);
             const response = await tmdbApi.get(`/movie/${path}`, { params: { language: 'en-US', page } });
             const data = response.data || {};
-            const results = (data.results || []).map(formatMediaImageUrls);
+            const rawResults = data.results || [];
+            const results = rawResults.map(formatMediaImageUrls);
+            const tmdbIds = rawResults.map((m) => m.id).filter(Boolean);
+            const statusMap = await getDownloadStatuses(tmdbIds);
+            const withStatus = results.map((m) => {
+                const id = m.externalId ?? m.id;
+                return { ...m, downloadStatus: id != null ? statusMap.get(Number(id)) ?? null : null };
+            });
             return res.status(200).json({
                 success: true,
                 data: {
-                    results,
+                    results: withStatus,
                     page: data.page ?? page,
                     total_pages: data.total_pages ?? 1,
                     total_results: data.total_results ?? 0,
@@ -197,10 +204,14 @@ router.get('/:id', optionalValidateToken, async (req, res) => {
         });
         if (merged.id !== undefined) delete merged.id;
 
-        const watchLinks = await getAllMovieServers(id, { adFree: req.user?.adFree === true });
+        const [watchLinks, statusMap] = await Promise.all([
+            getAllMovieServers(id, { adFree: req.user?.adFree === true }),
+            getDownloadStatuses([Number(id)]),
+        ]);
 
         const data = formatMediaImageUrls(merged);
         data.watchLinks = watchLinks;
+        data.downloadStatus = statusMap.get(Number(id)) ?? null;
         return res.status(200).json({
             success: true,
             data,
@@ -242,14 +253,23 @@ router.get('/', async (req, res) => {
                 MediaModel.find({ category: 'top_rated', mediaType: 'movie' }).sort({ vote_average: -1 }).lean()
             ]);
 
+            const allMovies = [...top_pick, ...popular, ...now_playing, ...top_rated];
+            const tmdbIds = allMovies.map((m) => m.externalId).filter(Boolean);
+            const statusMap = await getDownloadStatuses(tmdbIds);
+
+            const withStatus = (m) => {
+                const formatted = formatMediaImageUrls(m);
+                formatted.downloadStatus = statusMap.get(Number(m.externalId)) ?? null;
+                return formatted;
+            };
 
             return res.status(200).json({
                 success: true,
                 data: {
-                    now_playing: now_playing.map(formatMediaImageUrls),
-                    popular: popular.map(formatMediaImageUrls),
-                    top_rated: top_rated.map(formatMediaImageUrls),
-                    top_pick: top_pick.map(formatMediaImageUrls),
+                    now_playing: now_playing.map(withStatus),
+                    popular: popular.map(withStatus),
+                    top_rated: top_rated.map(withStatus),
+                    top_pick: top_pick.map(withStatus),
                 },
             });
         }
@@ -276,11 +296,18 @@ router.post('/search/:query/:includeAdult/:page', async (req, res) => {
         );
         const rawList = rawResults.data?.results ?? [];
         const results = Array.isArray(rawList) ? rawList.map(formatMultiSearchResult) : [];
+        const movieIds = rawList.filter((r) => r.media_type === 'movie').map((r) => r.id).filter(Boolean);
+        const statusMap = movieIds.length > 0 ? await getDownloadStatuses(movieIds) : new Map();
+        const withStatus = results.map((r) => {
+            if (r.media_type !== 'movie') return r;
+            const id = r.externalId ?? r.id;
+            return { ...r, downloadStatus: id != null ? statusMap.get(Number(id)) ?? null : null };
+        });
         const totalPages = Math.max(1, rawResults.data?.total_pages ?? 1);
         const totalResults = rawResults.data?.total_results ?? 0;
         return res.status(200).json({
             success: true,
-            data: results,
+            data: withStatus,
             page: pageNum,
             total_pages: totalPages,
             total_results: totalResults,

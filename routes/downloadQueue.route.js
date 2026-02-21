@@ -42,12 +42,24 @@ router.get('/', validateToken, validateAdmin, async (req, res) => {
     const limit = Math.min(parseInt(req.query.limit, 10) || 50, 100);
     const skip = Math.max(0, parseInt(req.query.skip, 10) || 0);
     const query = status ? { status } : {};
-    const rawList = await DownloadQueueModel.find(query).sort({ createdAt: -1 }).skip(skip).limit(limit).lean();
+    const rawList = await DownloadQueueModel.find(query)
+      .populate('requester.id', 'email')
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit)
+      .lean();
     const total = await DownloadQueueModel.countDocuments(query);
-    const list = rawList.map((item) => ({
-      ...item,
-      poster_url: getPosterUrl(item.poster_path, 'w200') || null,
-    }));
+    const list = rawList.map((item) => {
+      const populated = item.requester?.id;
+      const requesterEmail = populated?.email ?? null;
+      const requesterType = item.requester?.type ?? null;
+      return {
+        ...item,
+        poster_url: getPosterUrl(item.poster_path, 'w200') || null,
+        requesterEmail,
+        requesterType,
+      };
+    });
     return res.json({ success: true, data: { list, total } });
   } catch (err) {
     return res.status(500).json({ success: false, message: err.message });
@@ -64,12 +76,23 @@ router.post('/', validateToken, validateAdmin, async (req, res) => {
     if (!title || typeof title !== 'string' || !title.trim()) {
       return res.status(400).json({ success: false, message: 'title required' });
     }
+    const numTmdbId = tmdbId != null ? Number(tmdbId) : null;
+    if (numTmdbId != null) {
+      const existing = await DownloadQueueModel.findOne({ tmdbId: numTmdbId }).lean();
+      if (existing) {
+        return res.status(400).json({
+          success: false,
+          message: 'This movie is already in the queue',
+        });
+      }
+    }
     const doc = await DownloadQueueModel.create({
       title: title.trim(),
-      tmdbId: tmdbId != null ? Number(tmdbId) : null,
+      tmdbId: numTmdbId,
       poster_path: poster_path != null && String(poster_path).trim() ? String(poster_path).trim() : null,
       year: year != null ? Number(year) : null,
       status: 'pending',
+      requester: { id: req.userId, type: 'admin' },
     });
     return res.status(201).json({ success: true, data: doc });
   } catch (err) {

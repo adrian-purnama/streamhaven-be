@@ -1,5 +1,6 @@
 const ServerModel = require('../model/server.model');
 const UploadedVideoModel = require('../model/uploadedVideo.model');
+const DownloadQueueModel = require('../model/downloadQueue.model');
 const { tmdbImageUrl } = require('./tmdb.helper');
 
 /**
@@ -141,6 +142,48 @@ async function getAllMyPlayerServers(slug) {
   }));
 }
 
+/**
+ * Batch-fetch download status for multiple movies by TMDB id.
+ * Uses 2 DB queries total (DownloadQueue + UploadedVideo) instead of 2 per movie.
+ * @param {Array<number|string>} tmdbIds - Array of TMDB movie ids
+ * @returns {Promise<Map<number, string>>} Map of tmdbId -> status. Values: 'ad_free' | 'processing' | 'staging' | queue status (pending, waiting, searching, downloading, failed)
+ */
+async function getDownloadStatuses(tmdbIds = []) {
+  const ids = [...new Set(tmdbIds.map((id) => Number(id)).filter(Boolean))];
+  if (ids.length === 0) return new Map();
+
+  const [downloadQueueDocs, uploadedDocs] = await Promise.all([
+    DownloadQueueModel.find({ tmdbId: { $in: ids } }).lean(),
+    UploadedVideoModel.find({ externalId: { $in: ids } }).lean(),
+  ]);
+
+  const queueByTmdb = new Map(downloadQueueDocs.map((d) => [d.tmdbId, d]));
+  const uploadedByTmdb = new Map(uploadedDocs.map((d) => [d.externalId, d.slugStatus]));
+
+  const statusMap = new Map();
+  for (const tmdbId of ids) {
+    const queue = queueByTmdb.get(tmdbId);
+    if (queue) {
+      if (queue.status === 'done') {
+        const slugStatus = uploadedByTmdb.get(tmdbId);
+        statusMap.set(tmdbId, slugStatus === 'ready' ? 'ad_free' : 'processing');
+      } else if (queue.status === 'uploading') {
+        statusMap.set(tmdbId, 'staging');
+      } else {
+        statusMap.set(tmdbId, queue.status);
+      }
+    } else {
+      const slugStatus = uploadedByTmdb.get(tmdbId);
+      if (slugStatus) {
+        statusMap.set(tmdbId, slugStatus === 'ready' ? 'ad_free' : 'processing');
+      } else {
+        statusMap.set(tmdbId, null);
+      }
+    }
+  }
+  return statusMap;
+}
+
 module.exports = {
   getPosterUrl,
   buildWatchUrl,
@@ -149,4 +192,5 @@ module.exports = {
   getAllMovieServers,
   getAllTvServers,
   getAllMyPlayerServers,
+  getDownloadStatuses,
 };

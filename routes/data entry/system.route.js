@@ -34,7 +34,7 @@ router.get('/', async (req, res) => {
 // PUT / – update system config (adrian only). If logoUrl or logoFullUrl is changed, deletes old from storage when it was /api/images/:id.
 router.put('/', validateAdmin, async (req, res) => {
   try {
-    const { appName, openRegistration, logoUrl, logoFullUrl, tagLine } = req.body;
+    const { appName, openRegistration, openAdFreeRequest, logoUrl, logoFullUrl, tagLine } = req.body;
     let oldLogoUrl = null;
     let oldLogoFullUrl = null;
     const current = await systemModel.findOne({}).select('logoUrl logoFullUrl').lean();
@@ -46,6 +46,7 @@ router.put('/', validateAdmin, async (req, res) => {
       {
         ...(appName !== undefined && { appName }),
         ...(openRegistration !== undefined && { openRegistration }),
+        ...(openAdFreeRequest !== undefined && { openAdFreeRequest }),
         ...(logoUrl !== undefined && { logoUrl }),
         ...(logoFullUrl !== undefined && { logoFullUrl }),
         ...(tagLine !== undefined && { tagLine }),
