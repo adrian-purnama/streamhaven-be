@@ -13,14 +13,6 @@ const passport = require('../helper/passport.helper');
 
 const ADMIN_EMAIL = process.env.ADMIN_EMAIL;
 
-// Public: reCAPTCHA site key for frontend (guests adding ad-free requests)
-router.get('/recaptcha-site-key', (req, res) => {
-    console.log("site key hit")
-  const siteKey = process.env.SITE_KEY;
-  console.log(siteKey)
-  return res.json({ success: true, data: { siteKey } });
-});
-
 // Public: branding (logo, app name, tagline, full logo) for the frontend
 router.get('/branding', async (req, res) => {
     const doc = await system.findOne({}).select('appName logoUrl logoFullUrl tagLine openAdFreeRequest').lean()
