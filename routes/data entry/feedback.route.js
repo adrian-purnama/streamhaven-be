@@ -8,12 +8,24 @@ const { validateToken, validateAdmin, optionalValidateToken } = require('../../h
 const { fetchMovieByImdbId, fetchMovieByTmdbId } = require('../../helper/tmdb.helper')
 const { getPosterUrl } = require('../../helper/movietv.helper')
 const UploadedVideoModel = require('../../model/uploadedVideo.model')
+const { verifyRecaptcha } = require('../../helper/recaptcha.helper')
 
 const PAGE_SIZE = 20
 
 // POST / – submit feedback (public); if Authorization header present, userId is set from token
 router.post('/', optionalValidateToken, async (req, res) => {
   try {
+    // reCAPTCHA required for all (prevents spam)
+    if (process.env.SECRET_KEY) {
+      const { recaptchaToken } = req.body || {}
+      const result = await verifyRecaptcha(recaptchaToken, req.ip || req.socket?.remoteAddress)
+      if (!result.success) {
+        return res.status(400).json({
+          success: false,
+          message: 'Please complete the captcha verification',
+        })
+      }
+    }
     const { feedback, feedbackType } = req.body
     if (!feedback || typeof feedback !== 'string' || !feedback.trim()) {
       return res.status(400).json({ success: false, message: 'Feedback text is required' })
@@ -43,6 +55,17 @@ router.post('/ad-free-request', optionalValidateToken, async (req, res) => {
         success: false,
         message: 'Ad-free requests are currently closed',
       })
+    }
+    // reCAPTCHA required for all (prevents spam)
+    if (process.env.SECRET_KEY) {
+      const { recaptchaToken } = req.body || {}
+      const result = await verifyRecaptcha(recaptchaToken, req.ip || req.socket?.remoteAddress)
+      if (!result.success) {
+        return res.status(400).json({
+          success: false,
+          message: 'Please complete the captcha verification',
+        })
+      }
     }
     const { tmdbId, imdbId } = req.body || {}
     const hasTmdb = tmdbId != null && (typeof tmdbId === 'number' || String(tmdbId).trim() !== '')
