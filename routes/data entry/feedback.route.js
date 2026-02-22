@@ -3,6 +3,7 @@ const router = express.Router()
 require('../../model/user.model') // ensure User is registered before Feedback uses ref: 'User'
 const feedbackModel = require('../../model/feedback.model')
 const DownloadQueueModel = require('../../model/downloadQueue.model')
+const StagingVideoModel = require('../../model/stagingVideo.model')
 const systemModel = require('../../model/system.model')
 const { validateToken, validateAdmin, optionalValidateToken } = require('../../helper/validate.helper')
 const { fetchMovieByImdbId, fetchMovieByTmdbId } = require('../../helper/tmdb.helper')
@@ -87,11 +88,15 @@ router.post('/ad-free-request', optionalValidateToken, async (req, res) => {
     }
     const movieTmdbId = movie.id != null ? Number(movie.id) : null
     if (movieTmdbId != null) {
-      const existing = await DownloadQueueModel.findOne({ tmdbId: movieTmdbId }).lean()
-      if (existing) {
+      const [inQueue, inStaging, inUploaded] = await Promise.all([
+        DownloadQueueModel.findOne({ tmdbId: movieTmdbId }).lean(),
+        StagingVideoModel.findOne({ tmdbId: movieTmdbId }).lean(),
+        UploadedVideoModel.findOne({ externalId: movieTmdbId }).lean(),
+      ])
+      if (inQueue || inStaging || inUploaded) {
         return res.status(400).json({
           success: false,
-          message: 'This movie is already in the queue',
+          message: 'This movie is already in the queue, staging, or has been uploaded',
         })
       }
     }

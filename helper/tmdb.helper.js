@@ -1,6 +1,9 @@
 const { tmdbApi } = require("./api.helper");
 const GenreModel = require("../model/genre.model");
 const MediaModel = require("../model/media.model");
+const DownloadQueueModel = require("../model/downloadQueue.model");
+const StagingVideoModel = require("../model/stagingVideo.model");
+const UploadedVideoModel = require("../model/uploadedVideo.model");
 let lastSync = Date.now();
 let lastSyncTv = Date.now();
 const SYNC_INTERVAL = 1000 * 60 * 60 * 24;
@@ -159,6 +162,27 @@ const syncCategory = async (fetchPage, category) => {
             payload,
             { upsert: true }
         );
+        const tmdbId = movie.id != null ? Number(movie.id) : null;
+        if (tmdbId != null) {
+            const [inQueue, inStaging, inUploaded] = await Promise.all([
+                DownloadQueueModel.findOne({ tmdbId }).lean(),
+                StagingVideoModel.findOne({ tmdbId }).lean(),
+                UploadedVideoModel.findOne({ externalId: tmdbId }).lean(),
+            ]);
+            if (!inQueue && !inStaging && !inUploaded) {
+                const title = movie.title
+                    ? `${movie.title}${movie.release_date ? ` ${new Date(movie.release_date).getFullYear()}` : ''}`.trim()
+                    : `TMDB ${movie.id}`;
+                await DownloadQueueModel.create({
+                    title,
+                    tmdbId,
+                    poster_path: movie.poster_path != null && String(movie.poster_path).trim() ? String(movie.poster_path).trim() : null,
+                    year: movie.release_date ? new Date(movie.release_date).getFullYear() : null,
+                    status: 'pending',
+                    requester: { id: null, type: 'admin' },
+                });
+            }
+        }
     }
 }
 

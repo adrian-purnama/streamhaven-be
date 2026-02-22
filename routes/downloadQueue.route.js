@@ -3,6 +3,8 @@ const axios = require('axios');
 const { validateToken, validateAdmin } = require('../helper/validate.helper');
 const { getPosterUrl } = require('../helper/movietv.helper');
 const DownloadQueueModel = require('../model/downloadQueue.model');
+const StagingVideoModel = require('../model/stagingVideo.model');
+const UploadedVideoModel = require('../model/uploadedVideo.model');
 
 const router = express.Router();
 
@@ -78,11 +80,15 @@ router.post('/', validateToken, validateAdmin, async (req, res) => {
     }
     const numTmdbId = tmdbId != null ? Number(tmdbId) : null;
     if (numTmdbId != null) {
-      const existing = await DownloadQueueModel.findOne({ tmdbId: numTmdbId }).lean();
-      if (existing) {
+      const [inQueue, inStaging, inUploaded] = await Promise.all([
+        DownloadQueueModel.findOne({ tmdbId: numTmdbId }).lean(),
+        StagingVideoModel.findOne({ tmdbId: numTmdbId }).lean(),
+        UploadedVideoModel.findOne({ externalId: numTmdbId }).lean(),
+      ]);
+      if (inQueue || inStaging || inUploaded) {
         return res.status(400).json({
           success: false,
-          message: 'This movie is already in the queue',
+          message: 'This movie is already in the queue, staging, or has been uploaded',
         });
       }
     }
@@ -95,6 +101,40 @@ router.post('/', validateToken, validateAdmin, async (req, res) => {
       requester: { id: req.userId, type: 'admin' },
     });
     return res.status(201).json({ success: true, data: doc });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// -----------------------------------------------------------------------------
+// PATCH /:id — Update item (quality; only if pending or waiting)
+// -----------------------------------------------------------------------------
+
+router.patch('/:id', validateToken, validateAdmin, async (req, res) => {
+  try {
+    const doc = await DownloadQueueModel.findById(req.params.id).lean();
+    if (!doc) return res.status(404).json({ success: false, message: 'Queue item not found' });
+    if (doc.status === 'downloading' || doc.status === 'uploading') {
+      return res.status(400).json({
+        success: false,
+        message: 'Cannot update while downloading or uploading',
+      });
+    }
+    const { quality } = req.body || {};
+    if (quality != null && !['low', 'medium', 'high'].includes(quality)) {
+      return res.status(400).json({ success: false, message: 'Invalid quality' });
+    }
+    const update = {};
+    if (quality != null) update.quality = quality;
+    if (Object.keys(update).length === 0) {
+      return res.json({ success: true, data: doc });
+    }
+    const updated = await DownloadQueueModel.findByIdAndUpdate(
+      req.params.id,
+      { $set: update },
+      { new: true }
+    ).lean();
+    return res.json({ success: true, data: updated });
   } catch (err) {
     return res.status(500).json({ success: false, message: err.message });
   }
