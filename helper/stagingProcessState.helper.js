@@ -6,6 +6,7 @@
 let state = {
   isProcessing: false,
   startedAt: null,
+  lastUpdatedAt: null,
   total: 0,
   processed: 0,
   failed: 0,
@@ -77,6 +78,7 @@ function tryStartRun(pendingDocs) {
   if (state.isProcessing) return false;
   state.isProcessing = true;
   state.startedAt = new Date();
+  state.lastUpdatedAt = new Date();
   state.total = pendingDocs.length;
   state.processed = 0;
   state.failed = 0;
@@ -99,6 +101,7 @@ function updateProgress(processed, failed, currentStagingId) {
   state.processed = processed;
   state.failed = failed;
   state.currentStagingId = currentStagingId;
+  state.lastUpdatedAt = new Date();
 }
 
 /**
@@ -198,6 +201,7 @@ function getState() {
   return {
     isProcessing: state.isProcessing,
     startedAt: state.startedAt ? state.startedAt.toISOString() : null,
+    lastUpdatedAt: state.lastUpdatedAt ? state.lastUpdatedAt.toISOString() : null,
     total: state.total,
     processed: state.processed,
     failed: state.failed,

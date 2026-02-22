@@ -128,6 +128,7 @@ router.get('/', validateToken, validateAdmin, async (req, res) => {
         processRun: {
           isProcessing: processRun.isProcessing,
           startedAt: processRun.startedAt,
+          lastUpdatedAt: processRun.lastUpdatedAt,
           total: processRun.total,
           processed: processRun.processed,
           failed: processRun.failed,
