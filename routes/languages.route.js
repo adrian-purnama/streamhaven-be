@@ -212,12 +212,7 @@ router.post('/download-subtitle', async (req, res) => {
       { externalId, language, title },
       { timeout: 60000 }
     );
-    if (pyRes?.success) {
-      await UploadedVideoModel.updateOne(
-        { _id: uploadedVideo._id },
-        { $addToSet: { 'subtitle.downloadedSubtitles': language } }
-      );
-    }
+    // Do NOT add to downloadedSubtitles here — only process-subtitle webhook does that after uploading to Abyss
     return res.status(200).json({
       success: true,
       message: pyRes?.message || 'Subtitle downloaded',
@@ -240,6 +235,7 @@ router.get('/process-subtitle', validateWebhookSecret, async (req, res) => {
     const stagingDocs = await StagingSubtitleModel.find({}).lean();
     let processed = 0;
     let deleted = 0;
+    console.log(stagingDocs);
 
     for (const doc of stagingDocs) {
       const uploadedVideo = await UploadedVideoModel.findOne({ externalId: doc.tmdbId });
@@ -263,7 +259,7 @@ router.get('/process-subtitle', validateWebhookSecret, async (req, res) => {
           deleted++;
           continue;
         }
-        await putSubtitleToAbyss(uploadedVideo.abyssSlug, buffer, {
+        const res = await putSubtitleToAbyss(uploadedVideo.abyssSlug, buffer, {
           language: doc.language,
           filename: doc.filename || `${doc.language}.srt`,
         });
