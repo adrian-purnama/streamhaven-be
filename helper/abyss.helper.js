@@ -258,7 +258,16 @@ async function putSubtitleToAbyss(fileId, fileBuffer, { language, filename }) {
   return response.data;
 }
 
-
+async function getVideoSubtitle(slug){
+  const token = await getAbyssToken();
+  const response = await axios.get(`${AbyssBaseURL}/v1/subtitles/${slug}/list`, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+      accept: 'application/json',
+    },
+  });
+  return response.data.items;
+}
 
 
 module.exports = {
@@ -271,4 +280,5 @@ module.exports = {
   getResources,
   putResource,
   putSubtitleToAbyss,
+  getVideoSubtitle,
 };

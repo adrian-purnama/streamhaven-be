@@ -4,7 +4,7 @@ const UploadedVideoModel = require('../model/uploadedVideo.model');
 const StagingSubtitleModel = require('../model/stagingSubtitle.model');
 const { getSubtitleBuffer } = require('../model/subtitleGridFs.model');
 const { validateWebhookSecret } = require('../helper/validate.helper');
-const { putSubtitleToAbyss } = require('../helper/abyss.helper');
+const { putSubtitleToAbyss, getVideoSubtitle } = require('../helper/abyss.helper');
 const { verifyRecaptcha } = require('../helper/recaptcha.helper');
 require('dotenv').config();
 const axios = require('axios');
@@ -35,10 +35,31 @@ router.get('/', async (req, res) => {
 
 const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
 
+/** Map Abyss language name (lowercase) to ISO 639-1 code. Used so we treat Abyss as source of truth for "downloaded". */
+const ABYSS_NAME_TO_CODE = {
+  english: 'en', spanish: 'es', french: 'fr', german: 'de', italian: 'it', portuguese: 'pt',
+  japanese: 'ja', korean: 'ko', chinese: 'zh', arabic: 'ar', russian: 'ru', hindi: 'hi',
+  dutch: 'nl', polish: 'pl', swedish: 'sv', danish: 'da', finnish: 'fi', norwegian: 'no',
+  czech: 'cs', turkish: 'tr', thai: 'th', vietnamese: 'vi', indonesian: 'id', romanian: 'ro',
+  greek: 'el', hebrew: 'he', hungarian: 'hu', ukrainian: 'uk', malay: 'ms', croatian: 'hr',
+  bulgarian: 'bg', slovak: 'sk', slovenian: 'sl', serbian: 'sr', persian: 'fa', farsi_persian: 'fa',
+  bengali: 'bn', tamil: 'ta', telugu: 'te', malayalam: 'ml', urdu: 'ur', latvian: 'lv',
+  lithuanian: 'lt', estonian: 'et', bosnian: 'bs', sinhala: 'si', chinese_bg_code: 'zh',
+  big_5_code: 'zh', brazilian_portuguese: 'pt', spanish_latin_america: 'es', albanian: 'al',
+};
+
+function abyssNameToCode(name) {
+  if (!name || typeof name !== 'string') return null;
+  const s = name.trim().toLowerCase();
+  if (s.length === 2) return s;
+  return ABYSS_NAME_TO_CODE[s] || null;
+}
+
 /**
  * GET /api/languages/subtitle-available?externalId=123
  * Returns available subtitles for a video. Uses cached list if fresh (<30 days),
  * otherwise fetches from the Python downloader and caches the result.
+ * Also checks Abyss remote (by slug). downloadedSubtitles = only languages that exist on Abyss (source of truth).
  */
 router.get('/subtitle-available', async (req, res) => {
   const { externalId } = req.query;
@@ -61,12 +82,52 @@ router.get('/subtitle-available', async (req, res) => {
     const lastFetch = sub.lastCacheAvailableSubtitles;
     const cacheValid = lastFetch && (Date.now() - new Date(lastFetch).getTime()) < THIRTY_DAYS_MS && cached.length > 0;
 
+    // Always check Abyss for subtitles actually on the video (by slug)
+    let subtitleOnAbyss = [];
+    const slug = uploadedVideo.abyssSlug;
+    if (slug && typeof slug === 'string') {
+      try {
+        const raw = await getVideoSubtitle(slug);
+        const list = Array.isArray(raw) ? raw : [];
+        subtitleOnAbyss = list
+          .map((item) => {
+            if (!item || typeof item !== 'object') return null;
+            const name = item.name ?? item.language ?? item.label;
+            if (name == null) return null;
+            return { name: String(name) };
+          })
+          .filter(Boolean);
+      } catch (err) {
+        console.error('[subtitle-available] Abyss getVideoSubtitle failed:', err?.message);
+      }
+    }
+
+    // Use Abyss as source of truth: "downloaded" only if it exists on Abyss (fixes DB/Abyss drift e.g. zh in DB but not on Abyss)
+    const codesOnAbyss = subtitleOnAbyss
+      .map((o) => abyssNameToCode(o.name))
+      .filter(Boolean);
+    const dbDownloaded = sub.downloadedSubtitles || [];
+    const downloadedSubtitles = dbDownloaded.filter((code) => codesOnAbyss.includes(code));
+
+    // If DB has codes that are not on Abyss, remove the drift from the DB
+    if (dbDownloaded.length !== downloadedSubtitles.length || dbDownloaded.some((c, i) => c !== downloadedSubtitles[i])) {
+      await UploadedVideoModel.updateOne(
+        { _id: uploadedVideo._id },
+        { $set: { 'subtitle.downloadedSubtitles': downloadedSubtitles } }
+      );
+    }
+
+    const baseData = {
+      downloadedSubtitles,
+      subtitleOnAbyss,
+    };
+
     if (cacheValid) {
       return res.status(200).json({
         success: true,
         data: {
           availableSubtitles: cached,
-          downloadedSubtitles: sub.downloadedSubtitles || [],
+          ...baseData,
           fromCache: true,
         },
       });
@@ -97,7 +158,7 @@ router.get('/subtitle-available', async (req, res) => {
         success: true,
         data: {
           availableSubtitles: shortCodes,
-          downloadedSubtitles: sub.downloadedSubtitles || [],
+          ...baseData,
           fromCache: false,
         },
       });
@@ -107,7 +168,7 @@ router.get('/subtitle-available', async (req, res) => {
       success: true,
       data: {
         availableSubtitles: [],
-        downloadedSubtitles: sub.downloadedSubtitles || [],
+        ...baseData,
         fromCache: false,
       },
     });
