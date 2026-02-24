@@ -230,6 +230,33 @@ async function putResource(slug, newFileName) {
   }
 }
 
+/**
+ * Upload a subtitle file to Abyss for an existing file (video) by its ID.
+ * API: PUT /v1/upload/subtitles/:id with query params language, filename; body = raw file bytes.
+ * @param {string} fileId - Abyss file/video ID (slug)
+ * @param {Buffer} fileBuffer - Raw subtitle file data (e.g. .srt contents)
+ * @param {{ language: string, filename: string }} opts - e.g. { language: 'English', filename: 'english.srt' }
+ * @returns {Promise<{ id: string, name: string, type: string, slug: string, createdAt: string }>}
+ */
+async function putSubtitleToAbyss(fileId, fileBuffer, { language, filename }) {
+  const token = await getAbyssToken();
+  const params = new URLSearchParams();
+  if (language) params.set('language', language);
+  if (filename) params.set('filename', filename);
+  const query = params.toString();
+  const url = `${AbyssBaseURL}/v1/upload/subtitles/${encodeURIComponent(fileId)}${query ? `?${query}` : ''}`;
+  const response = await axios.put(url, fileBuffer, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/octet-stream',
+      Accept: 'application/json',
+    },
+    maxBodyLength: Infinity,
+    maxContentLength: Infinity,
+    validateStatus: (status) => status >= 200 && status < 300,
+  });
+  return response.data;
+}
 
 
 
@@ -243,4 +270,5 @@ module.exports = {
   deleteAbyssVideoById,
   getResources,
   putResource,
+  putSubtitleToAbyss,
 };

@@ -221,7 +221,7 @@ router.post('/login', async (req, res) => {
         })
     }
 
-    const token = jwt.sign({ id: findUser._id, email: findUser.email }, process.env.JWT_SECRET, { expiresIn: '7d' })
+    const token = jwt.sign({ id: findUser._id, email: findUser.email }, process.env.JWT_SECRET, { expiresIn: '30d' })
 
     return res.status(200).json({
         success : true,
@@ -269,7 +269,7 @@ router.get('/google/callback', (req, res, next) => {
     const token = jwt.sign(
       { id: user._id, email: user.email },
       process.env.JWT_SECRET,
-      { expiresIn: '7d' }
+      { expiresIn: '30d' }
     );
     res.redirect(`${FRONTEND_URL}/login?token=${encodeURIComponent(token)}`);
   })(req, res, next);

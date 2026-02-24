@@ -1,6 +1,6 @@
 const express = require('express');
 const axios = require('axios');
-const { validateToken, validateAdmin } = require('../helper/validate.helper');
+const { validateToken, validateAdmin, validateWebhookSecret } = require('../helper/validate.helper');
 const { getPosterUrl } = require('../helper/movietv.helper');
 const DownloadQueueModel = require('../model/downloadQueue.model');
 const StagingVideoModel = require('../model/stagingVideo.model');
@@ -20,18 +20,7 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-// -----------------------------------------------------------------------------
-// Webhook auth — downloader must send X-Webhook-Secret (or body.webhookSecret)
-// -----------------------------------------------------------------------------
-
-function checkWebhookSecret(req, res, next) {
-  const secret = req.headers['x-webhook-secret'] || req.body?.webhookSecret;
-  if (!WEBHOOK_SECRET || secret !== WEBHOOK_SECRET) {
-    console.log('[download-queue] webhook rejected: invalid or missing X-Webhook-Secret (check WEBHOOK_SECRET matches downloader .env)');
-    return res.status(401).json({ success: false, message: 'Invalid webhook secret' });
-  }
-  next();
-}
+// Use validateWebhookSecret from validate.helper for webhook routes (X-Webhook-Secret header).
 
 // -----------------------------------------------------------------------------
 // GET / — List queue (optional ?status=, ?limit=, ?skip=)

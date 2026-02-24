@@ -113,4 +113,25 @@ const validateStagingAuth = async (req, res, next) => {
   return validateToken(req, res, next);
 };
 
-module.exports = { validateToken, validateAdmin, optionalValidateToken, validateStagingAuth };
+/**
+ * Webhook secret for subtitle (and other) webhooks. Caller must send X-Webhook-Secret header.
+ * Set WEBHOOK_SECRET in .env (e.g. same value as in downloader .env).
+ */
+const WEBHOOK_SECRET = (process.env.WEBHOOK_SECRET || '').trim();
+
+/**
+ * Middleware: validates X-Webhook-Secret header. Use on webhook routes called by the downloader.
+ * Rejects with 401 if WEBHOOK_SECRET is not set or the header does not match.
+ */
+const validateWebhookSecret = (req, res, next) => {
+  const secret = (req.headers['x-webhook-secret'] || req.body?.webhookSecret || '').trim();
+  if (!WEBHOOK_SECRET || secret !== WEBHOOK_SECRET) {
+    return res.status(401).json({
+      success: false,
+      message: 'Invalid webhook secret',
+    });
+  }
+  next();
+};
+
+module.exports = { validateToken, validateAdmin, optionalValidateToken, validateStagingAuth, validateWebhookSecret, WEBHOOK_SECRET };

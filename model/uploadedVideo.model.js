@@ -45,6 +45,20 @@ const uploadedVideoSchema = new Schema(
       type: Number,
       default: null,
     },
+    subtitle: {
+      availableSubtitles: {
+        type: [String],
+        default: [],
+      },
+      downloadedSubtitles: {
+        type: [String],
+        default: [],
+      },
+      lastCacheAvailableSubtitles: {
+        type: Date,
+        default: null,
+      },
+    },
   },
   { timestamps: true }
 );
