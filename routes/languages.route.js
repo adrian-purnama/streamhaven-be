@@ -259,7 +259,7 @@ router.get('/process-subtitle', validateWebhookSecret, async (req, res) => {
           deleted++;
           continue;
         }
-        const res = await putSubtitleToAbyss(uploadedVideo.abyssSlug, buffer, {
+        await putSubtitleToAbyss(uploadedVideo.abyssSlug, buffer, {
           language: doc.language,
           filename: doc.filename || `${doc.language}.srt`,
         });
