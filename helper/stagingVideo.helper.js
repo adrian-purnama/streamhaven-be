@@ -8,11 +8,11 @@ const MAX_SIZE_BYTES = 15 * 1024 * 1024 * 1024; // 15GB
 
 /**
  * Same as createStagingVideo but streams from readStream in chunks and calls onProgress(percent) so the server can report DB write progress.
- * @param {{ readStream: NodeJS.ReadableStream, mimetype: string, originalname: string, size: number, tmdbId?: number, imdbId?: string, title?: string, posterPath?: string }}
+ * @param {{ readStream: NodeJS.ReadableStream, mimetype: string, originalname: string, size: number, tmdbId?: number, imdbId?: string, title?: string, posterPath?: string, mediaType?: 'movie'|'tv', seasonNumber?: number, episodeNumber?: number }}
  * @param {(percent: number) => void} onProgress - called with 0-100 as bytes are written to GridFS
  */
 async function createStagingVideoWithProgress(
-  { readStream, mimetype, originalname, size, tmdbId = null, imdbId = null, title = '', posterPath = null },
+  { readStream, mimetype, originalname, size, tmdbId = null, imdbId = null, title = '', posterPath = null, mediaType = 'movie', seasonNumber = null, episodeNumber = null },
   onProgress
 ) {
   if (!ALLOWED_TYPES.includes(mimetype)) {
@@ -46,7 +46,7 @@ async function createStagingVideoWithProgress(
   if (typeof onProgress === 'function') onProgress(100);
 
   const gridFsFileId = uploadStream.id;
-  const staging = await StagingVideoModel.create({
+  const stagingPayload = {
     gridFsFileId,
     filename,
     size,
@@ -56,7 +56,11 @@ async function createStagingVideoWithProgress(
     poster_path: posterPath || undefined,
     title,
     status: 'pending',
-  });
+    mediaType: mediaType === 'tv' ? 'tv' : 'movie',
+  };
+  if (mediaType === 'tv' && seasonNumber != null) stagingPayload.seasonNumber = seasonNumber;
+  if (mediaType === 'tv' && episodeNumber != null) stagingPayload.episodeNumber = episodeNumber;
+  const staging = await StagingVideoModel.create(stagingPayload);
 
   return {
     stagingId: staging._id.toString(),
@@ -67,12 +71,12 @@ async function createStagingVideoWithProgress(
 /**
  * Stream upload to GridFS without knowing size upfront (e.g. from multipart stream).
  * Counts bytes as it streams; calls onProgress(percent) with 0 until end then 100.
- * @param {{ readStream: NodeJS.ReadableStream, mimetype: string, originalname: string, tmdbId?: number, imdbId?: string, title?: string, posterPath?: string }}
+ * @param {{ readStream: NodeJS.ReadableStream, mimetype: string, originalname: string, tmdbId?: number, imdbId?: string, title?: string, posterPath?: string, mediaType?: 'movie'|'tv', seasonNumber?: number, episodeNumber?: number }}
  * @param {(percent: number) => void} onProgress
  * @returns {Promise<{ stagingId: string, gridFsFileId: string, size: number }>}
  */
 async function createStagingVideoFromStream(
-  { readStream, mimetype, originalname, tmdbId = null, imdbId = null, title = '', posterPath = null },
+  { readStream, mimetype, originalname, tmdbId = null, imdbId = null, title = '', posterPath = null, mediaType = 'movie', seasonNumber = null, episodeNumber = null },
   onProgress
 ) {
   if (!ALLOWED_TYPES.includes(mimetype)) {
@@ -85,7 +89,7 @@ async function createStagingVideoFromStream(
   const gridFsFileId = uploadStream.id;
 
   // Create staging doc with status 'writing' so it does not appear in the staging list until upload is 100% complete
-  const staging = await StagingVideoModel.create({
+  const stagingPayload = {
     gridFsFileId,
     filename,
     size: 0,
@@ -95,7 +99,11 @@ async function createStagingVideoFromStream(
     poster_path: posterPath || undefined,
     title,
     status: 'writing',
-  });
+    mediaType: mediaType === 'tv' ? 'tv' : 'movie',
+  };
+  if (mediaType === 'tv' && seasonNumber != null) stagingPayload.seasonNumber = seasonNumber;
+  if (mediaType === 'tv' && episodeNumber != null) stagingPayload.episodeNumber = episodeNumber;
+  const staging = await StagingVideoModel.create(stagingPayload);
 
   let written = 0;
   const progressTransform = new Transform({

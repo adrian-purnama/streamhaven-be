@@ -28,7 +28,14 @@ const stagingVideoSchema = new Schema(
       type: String,
       default: 'video/mp4',
     },
-    /** TMDB movie id (for mapping after Abyss upload) */
+    /** 'movie' | 'tv'. Default 'movie' for backward compatibility. */
+    mediaType: {
+      type: String,
+      enum: ['movie', 'tv'],
+      default: 'movie',
+      index: true,
+    },
+    /** TMDB movie/show id (for mapping after Abyss upload). For TV, this is the show id. */
     tmdbId: {
       type: Number,
       default: null,
@@ -43,10 +50,22 @@ const stagingVideoSchema = new Schema(
       type: String,
       default: null,
     },
-    /** Display title (from TMDB or user) */
+    /** Display title (from TMDB or user). For TV, often episode title or "Show S01E01". */
     title: {
       type: String,
       default: '',
+    },
+    /** TV only: season number (1-based). */
+    seasonNumber: {
+      type: Number,
+      default: null,
+      index: true,
+    },
+    /** TV only: episode number within season (1-based). */
+    episodeNumber: {
+      type: Number,
+      default: null,
+      index: true,
     },
     /**
      * writing = file is still being streamed to GridFS (do not show in staging list).

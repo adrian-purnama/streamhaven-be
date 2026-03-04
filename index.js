@@ -114,6 +114,10 @@ app.get('/api/health', (req, res) => {
     res.status(200).json({message : "Made By Love from Adrian"})
 })
 
+app.get("/placeholder", (req, res) => {
+    res.status(200).json({message : "Placeholder"})
+})
+
 /** One-time fix: drop id_1 unique index if present. Causes E11000 dup key on upsert when docs lack id. */
 async function dropMediaIdIndex() {
   try {

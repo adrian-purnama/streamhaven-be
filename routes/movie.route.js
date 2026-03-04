@@ -1,6 +1,6 @@
 const express = require('express');
 const mongoose = require('mongoose');
-const { syncNowPlayingMovies, syncPopularMovies, syncTopRatedMovies, shouldSync, getLastSync, setLastSync, syncOnTheAirTv, syncPopularTv, syncTopRatedTv, shouldSyncTv, setLastSyncTv, syncMovieGenres, syncTvGenres, formatMediaImageUrls, formatMultiSearchResult, fetchMovieDetails, fetchMovieByImdbId, fetchMovieByTmdbId, saveMovieToCache } = require('../helper/tmdb.helper');
+const { syncNowPlayingMovies, syncPopularMovies, syncTopRatedMovies, shouldSync, getLastSync, setLastSync, syncOnTheAirTv, syncPopularTv, syncTopRatedTv, shouldSyncTv, setLastSyncTv, syncMovieGenres, syncTvGenres, formatMediaImageUrls, formatMultiSearchResult, fetchMovieDetails, fetchMovieByImdbId, fetchMovieByTmdbId, fetchTvByImdbId, fetchTvByTmdbId, getTvSeasonsSummary, saveMovieToCache } = require('../helper/tmdb.helper');
 const { getAllMovieServers, getDownloadStatuses } = require('../helper/movietv.helper');
 const { validateAdmin, validateToken, optionalValidateToken } = require('../helper/validate.helper');
 const MediaModel = require('../model/media.model');
@@ -44,7 +44,7 @@ router.get('/sync', async (req, res) => {
 });
 
 router.get('/top-pick', async (req, res) => {
-    const { imdb_id, tmdb_id } = req.query;
+    const { imdb_id, tmdb_id, type = 'movie' } = req.query;
     try {
         const hasImdb = imdb_id != null && String(imdb_id).trim();
         const hasTmdb = tmdb_id != null && String(tmdb_id).trim() !== '';
@@ -54,23 +54,32 @@ router.get('/top-pick', async (req, res) => {
                 message: 'imdb_id or tmdb_id is required',
             });
         }
-        const movie = hasTmdb
-            ? await fetchMovieByTmdbId(tmdb_id)
-            : await fetchMovieByImdbId(imdb_id);
-        if (!movie) {
+        const isTv = String(type).toLowerCase() === 'tv' || String(type).toLowerCase() === 'series';
+        const media = isTv
+            ? (hasTmdb ? await fetchTvByTmdbId(tmdb_id) : await fetchTvByImdbId(imdb_id))
+            : (hasTmdb ? await fetchMovieByTmdbId(tmdb_id) : await fetchMovieByImdbId(imdb_id));
+        if (!media) {
+            const label = isTv ? 'Series' : 'Movie';
             return res.status(404).json({
                 success: false,
-                message: hasTmdb ? 'Movie not found for this TMDB id' : 'Movie not found for this IMDB id',
+                message: hasTmdb ? `${label} not found for this TMDB id` : `${label} not found for this IMDB id`,
             });
+        }
+        const data = formatMediaImageUrls(media);
+        data.mediaType = isTv ? 'tv' : 'movie';
+        if (isTv && media.seasons) {
+            const summary = getTvSeasonsSummary(media);
+            data.number_of_seasons = summary.number_of_seasons;
+            data.seasons = summary.seasons.map((s) => formatMediaImageUrls(s));
         }
         return res.status(200).json({
             success: true,
-            data: formatMediaImageUrls(movie),
+            data,
         });
     } catch (err) {
         return res.status(500).json({
             success: false,
-            message: err.message || 'Failed to fetch movie',
+            message: err.message || 'Failed to fetch media',
         });
     }
 });

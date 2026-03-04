@@ -3,23 +3,20 @@ const { Schema } = mongoose;
 
 /**
  * Queue of videos to be downloaded (torrent) then uploaded to staging.
- * Backend processes one by one: calls Python downloader with jobId; Python calls webhooks on download-done and upload-done.
+ * - Movies: one doc per movie (title, status, quality, etc.).
+ * - TV: one doc per show (parent only); episode jobs live in DownloadSeriesQueue.
  */
 const downloadQueueSchema = new Schema(
   {
-    /** Search title for torrent (e.g. "World War Z 2013") */
+    /** Show/movie title. For TV parent this is the series name (e.g. "Loki"). */
     title: {
       type: String,
       required: true,
       index: true,
     },
     /**
-     * pending = in queue, not yet selected
-     * waiting = selected by "Process next", waiting to be started
-     * downloading = Python is downloading
-     * uploading = download done, Python is uploading to staging
-     * done = uploaded to staging (stagingId set)
-     * failed = error (errorMessage set)
+     * For movies: pending | waiting | searching | downloading | uploading | done | failed.
+     * For TV parents: leave empty (null); workflow status lives on children in DownloadSeriesQueue.
      */
     quality : {
       type: String,
@@ -28,8 +25,8 @@ const downloadQueueSchema = new Schema(
     },
     status: {
       type: String,
-      enum: ['pending', 'waiting', 'searching', 'downloading', 'uploading', 'done', 'failed'],
-      default: 'pending',
+      enum: ['pending', 'waiting', 'searching', 'downloading', 'uploading', 'done', 'failed', null],
+      default: null,
       index: true,
     },
     /** StagingVideo _id after successful upload */
@@ -48,11 +45,10 @@ const downloadQueueSchema = new Schema(
       type: String,
       default: null,
     },
-    /** Optional TMDB id for staging metadata */
+    /** TMDB id: for movies the movie id (unique per movie); for TV the show id (many entries per show, one per episode) */
     tmdbId: {
       type: Number,
       default: null,
-      unique: true,
       index: true,
     },
     poster_path: {
@@ -74,7 +70,29 @@ const downloadQueueSchema = new Schema(
         enum : ['user', 'admin', 'guest'],
         required : false,
       }
-    }
+    },
+    mediaType: {
+      type: String,
+      enum: ['movie', 'tv'],
+      default: 'movie',
+    },
+    /** Set when job is moved to waiting; used by downloader and webhooks. */
+    jobId: {
+      type: String,
+      default: null,
+      index: true,
+    },
+    /** For TV parent only: one doc per season (name, posterPath). */
+    seasonMetadata: {
+      type: [
+        {
+          seasonNumber: { type: Number },
+          name: { type: String },
+          posterPath: { type: String },
+        },
+      ],
+      default: [],
+    },
   },
   { timestamps: true }
 );

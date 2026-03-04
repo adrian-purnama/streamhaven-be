@@ -9,6 +9,7 @@ const jwt = require('jsonwebtoken');
 const axios = require('axios');
 const userModel = require('../model/user.model');
 const DownloadQueueModel = require('../model/downloadQueue.model');
+const DownloadSeriesQueueModel = require('../model/downloadSeriesQueue.model');
 const { getPosterUrl } = require('../helper/movietv.helper');
 const { URL } = require('url');
 
@@ -29,9 +30,23 @@ async function buildPayload() {
     const data = r.data || {};
     const jobId = data.jobId;
     if (jobId) {
-      const job = await DownloadQueueModel.findOne({ jobId: String(jobId) }).lean();
+      let job = await DownloadQueueModel.findOne({ jobId: String(jobId) }).lean();
       if (job) {
         data.job = { ...job, poster_url: getPosterUrl(job.poster_path, 'w200') || null };
+      } else {
+        job = await DownloadSeriesQueueModel.findOne({ jobId: String(jobId) })
+          .populate('parentId', 'poster_path tmdbId title')
+          .lean();
+        if (job) {
+          const parent = job.parentId || {};
+          data.job = {
+            ...job,
+            poster_url: getPosterUrl(parent.poster_path, 'w200') || null,
+            poster_path: parent.poster_path,
+            tmdbId: parent.tmdbId,
+            showTitle: parent.title,
+          };
+        }
       }
     }
     return data;

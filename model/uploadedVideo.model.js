@@ -7,16 +7,35 @@ const { Schema } = mongoose;
  */
 const uploadedVideoSchema = new Schema(
   {
-    /** TMDB movie id */
+    /** 'movie' | 'tv'. Default 'movie' for backward compatibility. */
+    mediaType: {
+      type: String,
+      enum: ['movie', 'tv'],
+      default: 'movie',
+      index: true,
+    },
+    /** TMDB movie id (movies) or show id (TV). For TV, one row per episode. */
     externalId: {
       type: Number,
       default: null,
       index: true,
     },
-    /** Display title */
+    /** Display title. For TV, often episode title or "Show S01E01". */
     title: {
       type: String,
       default: '',
+    },
+    /** TV only: season number (1-based). */
+    seasonNumber: {
+      type: Number,
+      default: null,
+      index: true,
+    },
+    /** TV only: episode number within season (1-based). */
+    episodeNumber: {
+      type: Number,
+      default: null,
+      index: true,
     },
     poster_path: {
       type: String,
@@ -64,4 +83,5 @@ const uploadedVideoSchema = new Schema(
 );
 
 uploadedVideoSchema.index({ externalId: 1, slugStatus: 1 });
+uploadedVideoSchema.index({ externalId: 1, seasonNumber: 1, episodeNumber: 1 });
 module.exports = mongoose.model('UploadedVideo', uploadedVideoSchema);

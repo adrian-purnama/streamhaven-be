@@ -335,6 +335,63 @@ const fetchMovieByTmdbId = async (tmdbId) => {
 };
 
 /**
+ * Fetch TV show details by IMDB id (e.g. tt0944947).
+ * Uses TMDB find by external id, then TV details.
+ * @param {string} imdbId - IMDB id (with or without "tt" prefix)
+ * @returns {Promise<object|null>} TV show object or null if not found
+ */
+const fetchTvByImdbId = async (imdbId) => {
+    const id = String(imdbId || '').trim();
+    if (!id) return null;
+    const normalized = id.startsWith('tt') ? id : `tt${id}`;
+    const findRes = await tmdbApi.get(`/find/${normalized}`, { params: { external_source: 'imdb_id' } });
+    const tvResults = findRes.data?.tv_results;
+    if (!tvResults?.length) return null;
+    const tmdbId = tvResults[0].id;
+    return fetchTvDetails(tmdbId);
+};
+
+/**
+ * Fetch TV show details by TMDB id.
+ * @param {number|string} tmdbId - TMDB TV id
+ * @returns {Promise<object|null>} TV show object or null if not found
+ */
+const fetchTvByTmdbId = async (tmdbId) => {
+    const id = typeof tmdbId === 'number' ? tmdbId : parseInt(String(tmdbId || ''), 10);
+    if (!Number.isFinite(id)) return null;
+    return fetchTvDetails(id);
+};
+
+/**
+ * Get TV show season count and per-season episode counts (and poster) from TMDB TV details.
+ * @param {object} tvDetails - TMDB TV details (from fetchTvDetails, fetchTvByImdbId, etc.)
+ * @returns {{ number_of_seasons: number, seasons: Array<{ season_number: number, episode_count: number, name: string, poster_path: string|null }> }}
+ */
+const getTvSeasonsSummary = (tvDetails) => {
+    if (!tvDetails || !Array.isArray(tvDetails.seasons)) {
+        return { number_of_seasons: 0, seasons: [] };
+    }
+    const seasons = tvDetails.seasons
+        .filter((s) => s.season_number >= 0)
+        .map((s) => ({
+            season_number: s.season_number ?? 0,
+            episode_count: s.episode_count ?? 0,
+            name: s.name ?? `Season ${s.season_number}`,
+            poster_path: s.poster_path ?? null,
+        }));
+    return {
+        number_of_seasons: seasons.length,
+        seasons,
+    };
+};
+
+
+const getTvSeasonsEpisodes = async (tmdbId, seasonNumber) => {
+    const res = await tmdbApi.get(`/tv/${tmdbId}/season/${seasonNumber}`, { params: { language: 'en-US' } });
+    return res.data.episodes || [];
+}
+
+/**
  * Save a single movie to cache with category (e.g. 'top_pick').
  * @param {object} movie - TMDB movie details (from fetchMovieByImdbId or similar)
  * @param {string} category - 'now_playing' | 'popular' | 'top_rated' | 'top_pick'
@@ -394,6 +451,10 @@ module.exports = {
     formatEpisodeGroups,
     fetchMovieByImdbId,
     fetchMovieByTmdbId,
+    fetchTvByImdbId,
+    fetchTvByTmdbId,
+    getTvSeasonsSummary,
     saveMovieToCache,
     GetReccomendations,
+    getTvSeasonsEpisodes,
 }

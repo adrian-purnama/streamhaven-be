@@ -44,6 +44,9 @@ const streamingUploadStorage = {
     const tmdbId = req.body.tmdbId != null ? Number(req.body.tmdbId) : null;
     const title = req.body.title != null ? String(req.body.title) : '';
     const posterPath = req.body.poster_path != null ? String(req.body.poster_path) : null;
+    const mediaType = req.body.mediaType === 'tv' ? 'tv' : 'movie';
+    const seasonNumber = req.body.seasonNumber != null ? Number(req.body.seasonNumber) : null;
+    const episodeNumber = req.body.episodeNumber != null ? Number(req.body.episodeNumber) : null;
     createStagingVideoFromStream(
       {
         readStream: file.stream,
@@ -52,6 +55,9 @@ const streamingUploadStorage = {
         tmdbId,
         title,
         posterPath,
+        mediaType,
+        seasonNumber,
+        episodeNumber,
       },
       (percent) => { if (sendLine) sendLine({ stage: 'writing', progress: percent }); }
     )
@@ -222,6 +228,9 @@ router.post('/upload-chunk', validateStagingAuth, validateAdmin, uploadChunk.sin
         tmdbId: req.body.tmdbId != null ? Number(req.body.tmdbId) : null,
         title: req.body.title != null ? String(req.body.title) : '',
         poster_path: req.body.poster_path != null ? String(req.body.poster_path) : null,
+        mediaType: req.body.mediaType === 'tv' ? 'tv' : 'movie',
+        seasonNumber: req.body.seasonNumber != null ? Number(req.body.seasonNumber) : null,
+        episodeNumber: req.body.episodeNumber != null ? Number(req.body.episodeNumber) : null,
       };
       writeStream.write(req.file.buffer);
       entry = { writeStream, filePath, meta, totalChunks, receivedChunks: new Set([0]) };
@@ -291,6 +300,9 @@ router.post('/upload-chunk', validateStagingAuth, validateAdmin, uploadChunk.sin
         tmdbId: meta.tmdbId,
         title: meta.title,
         posterPath: meta.poster_path,
+        mediaType: meta.mediaType,
+        seasonNumber: meta.seasonNumber,
+        episodeNumber: meta.episodeNumber,
       },
       (percent) => {
         setUploadState({ dbProgress: percent });
@@ -425,7 +437,7 @@ router.post('/process', validateToken, validateAdmin, async (req, res) => {
         // — Fetch slug status, create UploadedVideo, delete staging
         logLines.push(`${stagingId} Fetching slug status…`);
         const slugStatus = await getSlugStatus(slug);
-        await UploadedVideoModel.create({
+        const uploadedPayload = {
           externalId: doc.tmdbId ?? null,
           title: doc.title ?? '',
           poster_path: doc.poster_path ?? null,
@@ -433,7 +445,13 @@ router.post('/process', validateToken, validateAdmin, async (req, res) => {
           slugStatus,
           filename: doc.filename ?? null,
           size: doc.size ?? null,
-        });
+          mediaType: doc.mediaType === 'tv' ? 'tv' : 'movie',
+        };
+        if (doc.mediaType === 'tv') {
+          if (doc.seasonNumber != null) uploadedPayload.seasonNumber = doc.seasonNumber;
+          if (doc.episodeNumber != null) uploadedPayload.episodeNumber = doc.episodeNumber;
+        }
+        await UploadedVideoModel.create(uploadedPayload);
         logLines.push(`${stagingId} UploadedVideo created, slug: ${slug}`);
         await updateStaging(stagingId, { status: slugStatus, abyssSlug: slug });
         
