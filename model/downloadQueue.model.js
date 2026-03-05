@@ -80,7 +80,6 @@ const downloadQueueSchema = new Schema(
     jobId: {
       type: String,
       default: null,
-      index: true,
     },
     /** For TV parent only: one doc per season (name, posterPath). */
     seasonMetadata: {
