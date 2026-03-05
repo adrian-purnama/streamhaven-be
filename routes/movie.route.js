@@ -1,7 +1,7 @@
 const express = require('express');
 const mongoose = require('mongoose');
 const { syncNowPlayingMovies, syncPopularMovies, syncTopRatedMovies, shouldSync, getLastSync, setLastSync, syncOnTheAirTv, syncPopularTv, syncTopRatedTv, shouldSyncTv, setLastSyncTv, syncMovieGenres, syncTvGenres, formatMediaImageUrls, formatMultiSearchResult, fetchMovieDetails, fetchMovieByImdbId, fetchMovieByTmdbId, fetchTvByImdbId, fetchTvByTmdbId, getTvSeasonsSummary, saveMovieToCache } = require('../helper/tmdb.helper');
-const { getAllMovieServers, getDownloadStatuses } = require('../helper/movietv.helper');
+const { getAllMovieServers, getDownloadStatuses, getTvShowsDownloadStatuses } = require('../helper/movietv.helper');
 const { validateAdmin, validateToken, optionalValidateToken } = require('../helper/validate.helper');
 const MediaModel = require('../model/media.model');
 const { tmdbApi } = require('../helper/api.helper');
@@ -295,7 +295,7 @@ router.get('/', async (req, res) => {
     }
 });
 
-router.post('/search/:query/:includeAdult/:page', async (req, res) => {
+async function searchHandler(req, res) {
     try {
         const { query, includeAdult, page } = req.params;
         const pageNum = Math.max(1, parseInt(page, 10) || 1);
@@ -305,13 +305,33 @@ router.post('/search/:query/:includeAdult/:page', async (req, res) => {
         );
         const rawList = rawResults.data?.results ?? [];
         const results = Array.isArray(rawList) ? rawList.map(formatMultiSearchResult) : [];
-        const movieIds = rawList.filter((r) => r.media_type === 'movie').map((r) => r.id).filter(Boolean);
-        const statusMap = movieIds.length > 0 ? await getDownloadStatuses(movieIds) : new Map();
+
+        const movieIds = rawList
+            .filter((r) => r.media_type === 'movie')
+            .map((r) => r.id)
+            .filter(Boolean);
+        const tvIds = rawList
+            .filter((r) => r.media_type === 'tv')
+            .map((r) => r.id)
+            .filter(Boolean);
+
+        const [movieStatusMap, tvStatusMap] = await Promise.all([
+            movieIds.length > 0 ? getDownloadStatuses(movieIds) : Promise.resolve(new Map()),
+            tvIds.length > 0 ? getTvShowsDownloadStatuses(tvIds) : Promise.resolve(new Map()),
+        ]);
+
         const withStatus = results.map((r) => {
-            if (r.media_type !== 'movie') return r;
-            const id = r.externalId ?? r.id;
-            return { ...r, downloadStatus: id != null ? statusMap.get(Number(id)) ?? null : null };
+            if (r.media_type === 'movie') {
+                const id = r.externalId ?? r.id;
+                return { ...r, downloadStatus: id != null ? movieStatusMap.get(Number(id)) ?? null : null };
+            }
+            if (r.media_type === 'tv') {
+                const id = r.externalId ?? r.id;
+                return { ...r, downloadStatus: id != null ? tvStatusMap.get(Number(id)) ?? null : null };
+            }
+            return r;
         });
+
         const totalPages = Math.max(1, rawResults.data?.total_pages ?? 1);
         const totalResults = rawResults.data?.total_results ?? 0;
         return res.status(200).json({
@@ -327,6 +347,9 @@ router.post('/search/:query/:includeAdult/:page', async (req, res) => {
             message: err.message || 'Failed to search',
         });
     }
-});
+}
+
+router.get('/search/:query/:includeAdult/:page', searchHandler);
+router.post('/search/:query/:includeAdult/:page', searchHandler);
 
 module.exports = router;

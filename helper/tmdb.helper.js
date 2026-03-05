@@ -244,8 +244,11 @@ const fetchTv = async (fetchPage, target = TV_PER_CATEGORY) => {
 const syncCategoryTv = async (fetchPage, category) => {
     const list = await fetchTv(fetchPage);
     for (const tv of list) {
-        const details = await fetchTvDetails(tv.id, true);
-        const episodeGroup = formatEpisodeGroups(details?.episode_groups);
+        const details = await fetchTvDetails(tv.id, false, false);
+        const episodeGroup = {
+            episode_count: details?.number_of_episodes ?? 0,
+            group_count: details?.number_of_seasons ?? 0,
+        };
         const payload = tvToPayload(tv, category, episodeGroup);
         await MediaModel.findOneAndUpdate(
             { externalId: tv.id, mediaType: 'tv', category },

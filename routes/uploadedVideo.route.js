@@ -40,7 +40,7 @@ router.get('/', validateToken, validateAdmin, async (req, res) => {
 // POST /api/uploaded-videos – create or update mapping by abyssSlug (for unmapped Abyss resources)
 router.post('/', validateToken, validateAdmin, async (req, res) => {
   try {
-    const { abyssSlug, externalId, title, poster_path: posterPath } = req.body;
+    const { abyssSlug, externalId, title, poster_path: posterPath, mediaType, seasonNumber, episodeNumber } = req.body;
     const slug = abyssSlug == null ? '' : String(abyssSlug).trim();
     if (!slug) {
       return res.status(400).json({ success: false, message: 'abyssSlug required' });
@@ -55,6 +55,27 @@ router.post('/', validateToken, validateAdmin, async (req, res) => {
     }
     if (title !== undefined) update.title = title === null ? '' : String(title).trim();
     if (posterPath !== undefined) update.poster_path = posterPath === null || posterPath === '' ? null : String(posterPath).trim();
+    if (mediaType !== undefined) {
+      const mt = String(mediaType).toLowerCase();
+      if (mt !== 'movie' && mt !== 'tv') {
+        return res.status(400).json({ success: false, message: 'mediaType must be \"movie\" or \"tv\"' });
+      }
+      update.mediaType = mt;
+    }
+    if (seasonNumber !== undefined) {
+      const sn = seasonNumber === null || seasonNumber === '' ? null : Number(seasonNumber);
+      if (sn !== null && (Number.isNaN(sn) || sn < 1)) {
+        return res.status(400).json({ success: false, message: 'seasonNumber must be a positive number or null' });
+      }
+      update.seasonNumber = sn;
+    }
+    if (episodeNumber !== undefined) {
+      const en = episodeNumber === null || episodeNumber === '' ? null : Number(episodeNumber);
+      if (en !== null && (Number.isNaN(en) || en < 1)) {
+        return res.status(400).json({ success: false, message: 'episodeNumber must be a positive number or null' });
+      }
+      update.episodeNumber = en;
+    }
     const doc = await UploadedVideoModel.findOneAndUpdate(
       { abyssSlug: slug },
       { $set: { ...update, abyssSlug: slug } },
@@ -67,11 +88,11 @@ router.post('/', validateToken, validateAdmin, async (req, res) => {
   }
 });
 
-// PATCH /api/uploaded-videos/:id – update mapping (externalId/tmdb id, title, poster_path)
+// PATCH /api/uploaded-videos/:id – update mapping (externalId/tmdb id, title, poster_path, and optional TV fields)
 router.patch('/:id', validateToken, validateAdmin, async (req, res) => {
   try {
     const { id } = req.params;
-    const { externalId, title, poster_path: posterPath } = req.body;
+    const { externalId, title, poster_path: posterPath, mediaType, seasonNumber, episodeNumber } = req.body;
     const update = {};
     if (externalId !== undefined) {
       const tid = externalId === null || externalId === '' ? null : Number(externalId);
@@ -85,6 +106,27 @@ router.patch('/:id', validateToken, validateAdmin, async (req, res) => {
     }
     if (posterPath !== undefined) {
       update.poster_path = posterPath === null || posterPath === '' ? null : String(posterPath).trim();
+    }
+    if (mediaType !== undefined) {
+      const mt = String(mediaType).toLowerCase();
+      if (mt !== 'movie' && mt !== 'tv') {
+        return res.status(400).json({ success: false, message: 'mediaType must be \"movie\" or \"tv\"' });
+      }
+      update.mediaType = mt;
+    }
+    if (seasonNumber !== undefined) {
+      const sn = seasonNumber === null || seasonNumber === '' ? null : Number(seasonNumber);
+      if (sn !== null && (Number.isNaN(sn) || sn < 1)) {
+        return res.status(400).json({ success: false, message: 'seasonNumber must be a positive number or null' });
+      }
+      update.seasonNumber = sn;
+    }
+    if (episodeNumber !== undefined) {
+      const en = episodeNumber === null || episodeNumber === '' ? null : Number(episodeNumber);
+      if (en !== null && (Number.isNaN(en) || en < 1)) {
+        return res.status(400).json({ success: false, message: 'episodeNumber must be a positive number or null' });
+      }
+      update.episodeNumber = en;
     }
     if (Object.keys(update).length === 0) {
       return res.status(400).json({ success: false, message: 'Provide externalId, title and/or poster_path' });

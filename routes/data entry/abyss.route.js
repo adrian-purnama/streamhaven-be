@@ -3,6 +3,7 @@ const router = express.Router();
 const { validateToken, validateAdmin } = require('../../helper/validate.helper');
 const { getAccountInfo, deleteAbyssVideoById, getResources, putResource } = require('../../helper/abyss.helper');
 const uploadedVideoModel = require('../../model/uploadedVideo.model');
+const { getPosterUrl } = require('../../helper/movietv.helper');
 
 router.use(validateToken);
 router.use(validateAdmin);
@@ -39,20 +40,29 @@ router.delete('/delete-video/:slug', async (req, res) => {
 
 router.get('/resources',async (req, res) => {
   try {
-    // raw resources data
-    // TODO : can use other than item
-    const resources = await getResources();
+    const limit = Math.min(Math.max(1, parseInt(req.query.limit, 10) || 20), 100);
+    const skip = Math.max(0, parseInt(req.query.skip, 10) || 0);
 
+    // raw resources data
+    const resources = await getResources();
     const items = resources.item || resources.items || [];
+    const total = items.length;
+
+    const pageItems = items.slice(skip, skip + limit);
 
     const mappeditems = await Promise.all(
-      items.map(async (item) => {
-        const uploadedVideo = await uploadedVideoModel.findOne({ abyssSlug: item.id });
-        return uploadedVideo ?? null;
+      pageItems.map(async (item) => {
+        const uploadedVideo = await uploadedVideoModel.findOne({ abyssSlug: item.id }).lean();
+        if (!uploadedVideo) return null;
+        const posterUrl = getPosterUrl(uploadedVideo.poster_path, 'w200');
+        return {
+          ...uploadedVideo,
+          poster_url: posterUrl,
+        };
       })
     );
 
-    return res.status(200).json({ success: true, data: { items, mappeditems } });
+    return res.status(200).json({ success: true, data: { items: pageItems, mappeditems, total } });
   } catch (error) {
     return res.status(500).json({ success: false, message: error.message });
   }

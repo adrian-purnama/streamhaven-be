@@ -8,10 +8,9 @@ const {
     getLastSyncTv,
     setLastSyncTv,
     formatMediaImageUrls,
-    formatEpisodeGroups,
     fetchTvDetails,
 } = require('../helper/tmdb.helper');
-const { getAllTvServers } = require('../helper/movietv.helper');
+const { getAllTvServers, getTvEpisodeDownloadStatus, getTvShowsDownloadStatuses, getTvSeasonAdFreeEpisodes } = require('../helper/movietv.helper');
 const { validateAdmin, validateToken } = require('../helper/validate.helper');
 const MediaModel = require('../model/media.model');
 const { tmdbApi } = require('../helper/api.helper');
@@ -113,12 +112,21 @@ async function getTvByIdHandler(req, res) {
         });
         if (merged.id !== undefined) delete merged.id;
 
-        const watchLinks = await getAllTvServers(tmdbId, season, episode);
+        const [watchLinks, downloadStatus, adFreeEpisodeNumbers] = await Promise.all([
+            getAllTvServers(tmdbId, season, episode, { adFree: req.user?.adFree === true }),
+            getTvEpisodeDownloadStatus(tmdbId, season, episode),
+            getTvSeasonAdFreeEpisodes(tmdbId, season),
+        ]);
         const data = formatMediaImageUrls(merged);
         data.watchLinks = watchLinks;
+        data.downloadStatus = downloadStatus ?? null;
         data.season = season;
         data.episode = episode;
-        data.episode_group = formatEpisodeGroups(tmdbDetails.episode_groups);
+        data.adFreeEpisodeNumbers = adFreeEpisodeNumbers ?? [];
+        data.episode_group = {
+            episode_count: tmdbDetails.number_of_episodes ?? 0,
+            group_count: tmdbDetails.number_of_seasons ?? 0,
+        };
         if (tmdbDetails.next_episode_to_air != null) {
             data.next_episode_to_air = tmdbDetails.next_episode_to_air;
         }
@@ -151,19 +159,34 @@ router.get('/', async (req, res) => {
                 MediaModel.find({ category: 'popular', mediaType: 'tv' }).sort({ popularity: -1 }).lean(),
                 MediaModel.find({ category: 'top_rated', mediaType: 'tv' }).sort({ vote_average: -1 }).lean(),
             ]);
+            const allShows = [...now_playing, ...popular, ...top_rated];
+            const tvIds = [...new Set(allShows.map((m) => m.externalId).filter(Boolean))];
+            const statusMap = tvIds.length > 0 ? await getTvShowsDownloadStatuses(tvIds) : new Map();
+            const withStatus = (m) => {
+                const formatted = formatMediaImageUrls(m);
+                formatted.downloadStatus = statusMap.get(Number(m.externalId)) ?? null;
+                return formatted;
+            };
             return res.status(200).json({
                 success: true,
                 data: {
-                    now_playing: now_playing.map(formatMediaImageUrls),
-                    popular: popular.map(formatMediaImageUrls),
-                    top_rated: top_rated.map(formatMediaImageUrls),
+                    now_playing: now_playing.map(withStatus),
+                    popular: popular.map(withStatus),
+                    top_rated: top_rated.map(withStatus),
                 },
             });
         }
-        const list = await MediaModel.find({ category }).lean();
+        const list = await MediaModel.find({ category, mediaType: 'tv' }).lean();
+        const tvIds = [...new Set(list.map((m) => m.externalId).filter(Boolean))];
+        const statusMap = tvIds.length > 0 ? await getTvShowsDownloadStatuses(tvIds) : new Map();
+        const withStatus = (m) => {
+            const formatted = formatMediaImageUrls(m);
+            formatted.downloadStatus = statusMap.get(Number(m.externalId)) ?? null;
+            return formatted;
+        };
         return res.status(200).json({
             success: true,
-            data: list.map(formatMediaImageUrls),
+            data: list.map(withStatus),
         });
     } catch (err) {
         return res.status(500).json({

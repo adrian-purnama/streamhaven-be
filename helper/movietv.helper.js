@@ -77,9 +77,9 @@ async function formatTv(externalId, ss, eps) {
 
 /**
  * Get all movie servers and format each to { label, link } for the given externalId.
- * If options.adFree is true, also appends my_player links when an uploaded video exists with slugStatus 'ready'.
+ * When an uploaded video exists with slugStatus 'ready' (ad-free), prepends my_player (StreamHaven) links.
  * @param {number|string} externalId - TMDB movie id
- * @param {{ adFree?: boolean }} [options] - adFree: if true, include my_player links when uploaded video is ready
+ * @param {{ adFree?: boolean }} [options] - unused; kept for API compatibility
  * @returns {Promise<Array<{ label: string, link: string }>>}
  */
 async function getAllMovieServers(externalId, options = {}) {
@@ -91,15 +91,14 @@ async function getAllMovieServers(externalId, options = {}) {
     link: buildWatchUrl(s, { externalId }),
   }));
 
-  if (options.adFree === true) {
-    const uploaded = await UploadedVideoModel.findOne({
-      externalId: Number(externalId),
-      slugStatus: 'ready',
-    }).lean();
-    if (uploaded?.abyssSlug) {
-      const myPlayerLinks = await getAllMyPlayerServers(uploaded.abyssSlug);
-      links = [ ...myPlayerLinks, ...links];
-    }
+  const uploaded = await UploadedVideoModel.findOne({
+    mediaType: 'movie',
+    externalId: Number(externalId),
+    slugStatus: 'ready',
+  }).lean();
+  if (uploaded?.abyssSlug) {
+    const myPlayerLinks = await getAllMyPlayerServers(uploaded.abyssSlug);
+    links = [...myPlayerLinks, ...links];
   }
 
   return links;
@@ -107,16 +106,19 @@ async function getAllMovieServers(externalId, options = {}) {
 
 /**
  * Get all TV servers and format each to { label, link } for the given externalId, season, episode.
- * @param {number|string} externalId - TMDB TV id
+ * When an uploaded video exists for this episode (tmdb show + season + episode) with slugStatus 'ready' (ad-free),
+ * prepends my_player (StreamHaven) links using that episode's abyssSlug.
+ * @param {number|string} externalId - TMDB TV id (show id)
  * @param {number|string} ss - season number
  * @param {number|string} eps - episode number
+ * @param {{ adFree?: boolean }} [options] - unused; kept for API compatibility
  * @returns {Promise<Array<{ label: string, link: string }>>}
  */
-async function getAllTvServers(externalId, ss, eps) {
+async function getAllTvServers(externalId, ss, eps, options = {}) {
   const servers = await ServerModel.find({ usedFor: 'tv' })
     .sort({ createdAt: -1 })
     .lean();
-  return servers.map((s) => ({
+  let links = servers.map((s) => ({
     label: s.label || s.link || 'Watch',
     link: buildWatchUrl(s, {
       externalId,
@@ -124,6 +126,98 @@ async function getAllTvServers(externalId, ss, eps) {
       episode: eps,
     }),
   }));
+
+  const uploaded = await UploadedVideoModel.findOne({
+    mediaType: 'tv',
+    externalId: Number(externalId),
+    seasonNumber: Number(ss) ?? null,
+    episodeNumber: Number(eps) ?? null,
+    slugStatus: 'ready',
+  }).lean();
+  if (uploaded?.abyssSlug) {
+    const myPlayerLinks = await getAllMyPlayerServers(uploaded.abyssSlug);
+    links = [...myPlayerLinks, ...links];
+  }
+
+  return links;
+}
+
+/**
+ * Get download status for a single TV episode (by show id + season + episode).
+ * @param {number|string} showId - TMDB show id
+ * @param {number|string} seasonNumber - season number
+ * @param {number|string} episodeNumber - episode number
+ * @returns {Promise<'ad_free'|'processing'|null>} 'ad_free' when uploaded and ready, 'processing' when uploaded but not ready, null when not uploaded
+ */
+async function getTvEpisodeDownloadStatus(showId, seasonNumber, episodeNumber) {
+  const uploaded = await UploadedVideoModel.findOne({
+    mediaType: 'tv',
+    externalId: Number(showId),
+    seasonNumber: Number(seasonNumber) || null,
+    episodeNumber: Number(episodeNumber) || null,
+  }).lean();
+  if (!uploaded) return null;
+  return uploaded.slugStatus === 'ready' ? 'ad_free' : 'processing';
+}
+
+/**
+ * For a given TV show + season, return the list of episode numbers that are ad-free (uploaded and ready).
+ * @param {number|string} showId - TMDB show id
+ * @param {number|string} seasonNumber - season number
+ * @returns {Promise<number[]>} Sorted unique list of episode numbers
+ */
+async function getTvSeasonAdFreeEpisodes(showId, seasonNumber) {
+  const docs = await UploadedVideoModel.find({
+    mediaType: 'tv',
+    externalId: Number(showId),
+    seasonNumber: Number(seasonNumber) || null,
+    slugStatus: 'ready',
+  }).lean();
+  const nums = [...new Set(docs.map((d) => d.episodeNumber).filter((n) => Number.isFinite(n)))];
+  nums.sort((a, b) => a - b);
+  return nums;
+}
+
+/**
+ * Get download status for multiple TV shows by TMDB id (based on uploaded TV episodes).
+ * For each show id, returns:
+ * - 'ad_free' if any episode has slugStatus 'ready'
+ * - 'processing' if at least one episode exists but none are ready yet
+ * - null if no uploaded episodes exist for that show
+ * @param {Array<number|string>} tvIds - Array of TMDB TV ids (show ids)
+ * @returns {Promise<Map<number, string|null>>}
+ */
+async function getTvShowsDownloadStatuses(tvIds = []) {
+  const ids = [...new Set(tvIds.map((id) => Number(id)).filter(Boolean))];
+  if (ids.length === 0) return new Map();
+
+  const uploadedDocs = await UploadedVideoModel.find({
+    mediaType: 'tv',
+    externalId: { $in: ids },
+  }).lean();
+
+  const byShow = new Map();
+  for (const doc of uploadedDocs) {
+    const key = Number(doc.externalId);
+    if (!byShow.has(key)) byShow.set(key, []);
+    byShow.get(key).push(doc);
+  }
+
+  const statusMap = new Map();
+  for (const id of ids) {
+    const docs = byShow.get(id) || [];
+    if (docs.length === 0) {
+      statusMap.set(id, null);
+      continue;
+    }
+    if (docs.some((d) => d.slugStatus === 'ready')) {
+      statusMap.set(id, 'ad_free');
+    } else {
+      statusMap.set(id, 'processing');
+    }
+  }
+
+  return statusMap;
 }
 
 /**
@@ -193,4 +287,7 @@ module.exports = {
   getAllTvServers,
   getAllMyPlayerServers,
   getDownloadStatuses,
+  getTvShowsDownloadStatuses,
+  getTvEpisodeDownloadStatus,
+  getTvSeasonAdFreeEpisodes,
 };
