@@ -6,6 +6,7 @@ const rateLimit = require('express-rate-limit');
 const mongoose = require('mongoose');
 const systemModel = require('./model/system.model');
 const MediaModel = require('./model/media.model');
+const DownloadQueueModel = require('./model/downloadQueue.model');
 const passport = require("./helper/passport.helper");
 const session = require('express-session');
 const { attachDownloadQueueProgressWs } = require('./ws/downloadQueueProgress');
@@ -129,11 +130,30 @@ async function dropMediaIdIndex() {
   }
 }
 
+/** Ensure jobId index is sparse-unique so multiple docs can have jobId: null (TV parents, pending). */
+async function ensureDownloadQueueJobIdIndex() {
+  const coll = DownloadQueueModel.collection;
+  try {
+    await coll.dropIndex('jobId_1');
+    console.log('Dropped downloadqueues.jobId_1 (fix for E11000 on null jobId)');
+  } catch (err) {
+    if (err.code === 27 || err.codeName === 'IndexNotFound') { /* already gone */ }
+    else console.warn('Could not drop jobId_1:', err.message);
+  }
+  try {
+    await coll.createIndex({ jobId: 1 }, { unique: true, sparse: true, name: 'jobId_1' });
+    console.log('Created sparse unique index downloadqueues.jobId_1');
+  } catch (err) {
+    console.warn('Could not create sparse jobId index:', err.message);
+  }
+}
+
 mongoose.connect(process.env.MONGODB_URI, {
     dbName : "app",
 })
 .then(async () => {
     await dropMediaIdIndex();
+    await ensureDownloadQueueJobIdIndex();
     await populateSystem();
     console.log("MongoDB Connected");
 })
