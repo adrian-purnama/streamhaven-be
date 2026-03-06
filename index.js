@@ -133,18 +133,35 @@ async function dropMediaIdIndex() {
 /** Ensure jobId index is sparse-unique so multiple docs can have jobId: null (TV parents, pending). */
 async function ensureDownloadQueueJobIdIndex() {
   const coll = DownloadQueueModel.collection;
+  const indexName = 'jobId_1';
   try {
-    await coll.dropIndex('jobId_1');
-    console.log('Dropped downloadqueues.jobId_1 (fix for E11000 on null jobId)');
+    const indexes = await coll.indexes();
+    const jobIdIndex = indexes.find((i) => i.name === indexName || (i.key && i.key.jobId !== undefined));
+    if (jobIdIndex && !jobIdIndex.sparse) {
+      await coll.dropIndex(jobIdIndex.name);
+      console.log('Dropped downloadqueues.jobId_1 (was unique non-sparse, caused E11000 on null jobId)');
+    }
   } catch (err) {
-    if (err.code === 27 || err.codeName === 'IndexNotFound') { /* already gone */ }
-    else console.warn('Could not drop jobId_1:', err.message);
+    if (err.code === 27 || err.codeName === 'IndexNotFound') { /* ok */ }
+    else {
+      console.warn('ensureDownloadQueueJobIdIndex drop:', err.message);
+    }
   }
   try {
-    await coll.createIndex({ jobId: 1 }, { unique: true, sparse: true, name: 'jobId_1' });
-    console.log('Created sparse unique index downloadqueues.jobId_1');
+    await coll.createIndex({ jobId: 1 }, { unique: true, sparse: true, name: indexName });
+    console.log('Ensured sparse unique index downloadqueues.jobId_1');
   } catch (err) {
-    console.warn('Could not create sparse jobId index:', err.message);
+    if (err.code === 85 || err.codeName === 'IndexOptionsConflict' || (err.message && err.message.includes('already exists'))) {
+      try {
+        await coll.dropIndex(indexName);
+        await coll.createIndex({ jobId: 1 }, { unique: true, sparse: true, name: indexName });
+        console.log('Recreated sparse unique index downloadqueues.jobId_1');
+      } catch (e2) {
+        console.error('Failed to fix jobId index:', e2.message);
+      }
+    } else {
+      console.error('Failed to create sparse jobId index:', err.message);
+    }
   }
 }
 

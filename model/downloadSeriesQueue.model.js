@@ -61,12 +61,6 @@ const downloadSeriesQueueSchema = new Schema(
       type: String,
       default: null,
     },
-    /** Set when moved to waiting; used by downloader and webhooks. */
-    jobId: {
-      type: String,
-      default: null,
-      index: true,
-    },
     requester: {
       id: {
         type: Schema.Types.ObjectId,

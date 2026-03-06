@@ -96,4 +96,7 @@ const downloadQueueSchema = new Schema(
   { timestamps: true }
 );
 
+// Sparse unique: many docs can have jobId null (TV parents, pending). When set, jobId must be unique.
+downloadQueueSchema.index({ jobId: 1 }, { unique: true, sparse: true });
+
 module.exports = mongoose.model('DownloadQueue', downloadQueueSchema);
