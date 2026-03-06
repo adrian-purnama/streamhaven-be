@@ -134,35 +134,16 @@ async function dropMediaIdIndex() {
 async function ensureDownloadQueueJobIdIndex() {
   const coll = DownloadQueueModel.collection;
   const indexName = 'jobId_1';
+  // Always drop jobId_1 then recreate sparse-unique (something may recreate a bad one after us).
   try {
-    const indexes = await coll.indexes();
-    const jobIdIndex = indexes.find((i) => i.name === indexName || (i.key && i.key.jobId !== undefined));
-    if (jobIdIndex && !jobIdIndex.sparse) {
-      await coll.dropIndex(jobIdIndex.name);
-      console.log('Dropped downloadqueues.jobId_1 (was unique non-sparse, caused E11000 on null jobId)');
-    }
+    await coll.dropIndex(indexName);
+    console.log('Dropped downloadqueues.jobId_1');
   } catch (err) {
     if (err.code === 27 || err.codeName === 'IndexNotFound') { /* ok */ }
-    else {
-      console.warn('ensureDownloadQueueJobIdIndex drop:', err.message);
-    }
+    else console.warn('drop jobId_1:', err.message);
   }
-  try {
-    await coll.createIndex({ jobId: 1 }, { unique: true, sparse: true, name: indexName });
-    console.log('Ensured sparse unique index downloadqueues.jobId_1');
-  } catch (err) {
-    if (err.code === 85 || err.codeName === 'IndexOptionsConflict' || (err.message && err.message.includes('already exists'))) {
-      try {
-        await coll.dropIndex(indexName);
-        await coll.createIndex({ jobId: 1 }, { unique: true, sparse: true, name: indexName });
-        console.log('Recreated sparse unique index downloadqueues.jobId_1');
-      } catch (e2) {
-        console.error('Failed to fix jobId index:', e2.message);
-      }
-    } else {
-      console.error('Failed to create sparse jobId index:', err.message);
-    }
-  }
+  await coll.createIndex({ jobId: 1 }, { unique: true, sparse: true, name: indexName });
+  console.log('Created sparse unique index downloadqueues.jobId_1');
 }
 
 mongoose.connect(process.env.MONGODB_URI, {
@@ -170,9 +151,16 @@ mongoose.connect(process.env.MONGODB_URI, {
 })
 .then(async () => {
     await dropMediaIdIndex();
-    await ensureDownloadQueueJobIdIndex();
     await populateSystem();
     console.log("MongoDB Connected");
+    // Run after a delay so we run after Mongoose ensureIndexes; then we force correct jobId index.
+    setTimeout(async () => {
+      try {
+        await ensureDownloadQueueJobIdIndex();
+      } catch (e) {
+        console.error('ensureDownloadQueueJobIdIndex:', e.message);
+      }
+    }, 1500);
 })
 .catch((err)=> (console.log(err)))
 
