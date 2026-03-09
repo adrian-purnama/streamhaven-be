@@ -130,11 +130,11 @@ async function dropMediaIdIndex() {
   }
 }
 
-/** Ensure jobId index is sparse-unique so multiple docs can have jobId: null (TV parents, pending). */
+/** Ensure jobId index is unique only for non-null jobId, so many docs can have jobId: null. */
 async function ensureDownloadQueueJobIdIndex() {
   const coll = DownloadQueueModel.collection;
   const indexName = 'jobId_1';
-  // Always drop jobId_1 then recreate sparse-unique (something may recreate a bad one after us).
+  // Always drop jobId_1 then recreate as a unique partial index (something may recreate a bad one after us).
   try {
     await coll.dropIndex(indexName);
     console.log('Dropped downloadqueues.jobId_1');
@@ -142,8 +142,15 @@ async function ensureDownloadQueueJobIdIndex() {
     if (err.code === 27 || err.codeName === 'IndexNotFound') { /* ok */ }
     else console.warn('drop jobId_1:', err.message);
   }
-  await coll.createIndex({ jobId: 1 }, { unique: true, sparse: true, name: indexName });
-  console.log('Created sparse unique index downloadqueues.jobId_1');
+  await coll.createIndex(
+    { jobId: 1 },
+    {
+      unique: true,
+      name: indexName,
+      partialFilterExpression: { jobId: { $exists: true, $ne: null } },
+    }
+  );
+  console.log('Created partial unique index downloadqueues.jobId_1 (non-null jobId only)');
 }
 
 mongoose.connect(process.env.MONGODB_URI, {

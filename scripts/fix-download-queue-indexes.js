@@ -1,8 +1,8 @@
 /**
  * Fix E11000 duplicate key on app.downloadqueues (index: jobId_1 dup key: { jobId: null }).
  *
- * Cause: A unique index on jobId without "sparse" allows only one document with jobId: null.
- * Fix: Drop jobId_1 and recreate it as sparse + unique so many docs can have jobId: null.
+ * Cause: A unique index on jobId that includes null values allows only one document with jobId: null.
+ * Fix: Drop jobId_1 and recreate it as a unique PARTIAL index so only non-null jobId values are enforced.
  *
  * Run with backend stopped so the app doesn't recreate a bad index.
  * From project root: node backend/scripts/fix-download-queue-indexes.js
@@ -40,7 +40,7 @@ async function run() {
     console.log('No index', INDEX_NAME, 'present.');
   }
 
-  // Drop jobId_1 (may be unique but not sparse)
+  // Drop jobId_1 (may be unique over all values including null)
   try {
     await coll.dropIndex(INDEX_NAME);
     console.log('Dropped index:', INDEX_NAME);
@@ -52,16 +52,25 @@ async function run() {
     }
   }
 
-  // Create sparse unique so multiple null jobIds are allowed
+  // Create partial unique index so multiple null/absent jobIds are allowed; only non-null jobIds must be unique.
   await coll.createIndex(
     { jobId: 1 },
-    { unique: true, sparse: true, name: INDEX_NAME }
+    {
+      unique: true,
+      name: INDEX_NAME,
+      partialFilterExpression: { jobId: { $exists: true, $ne: null } },
+    }
   );
-  console.log('Created sparse unique index', INDEX_NAME, 'on', collectionName + '.' + INDEX_NAME);
+  console.log('Created partial unique index', INDEX_NAME, 'on', collectionName, '(non-null jobId only).');
 
   const after = await coll.indexes();
   const jobIdIndexAfter = after.find((idx) => idx.name === INDEX_NAME);
-  console.log('Verified:', jobIdIndexAfter ? 'sparse=' + !!jobIdIndexAfter.sparse + ', unique=' + !!jobIdIndexAfter.unique : 'missing');
+  console.log(
+    'Verified:',
+    jobIdIndexAfter
+      ? 'unique=' + !!jobIdIndexAfter.unique + ', partialFilterExpression=' + JSON.stringify(jobIdIndexAfter.partialFilterExpression || {})
+      : 'missing'
+  );
 
   await mongoose.disconnect();
   console.log('Done. You can start the backend again.');
