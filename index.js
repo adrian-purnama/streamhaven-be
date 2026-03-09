@@ -152,15 +152,13 @@ mongoose.connect(process.env.MONGODB_URI, {
 .then(async () => {
     await dropMediaIdIndex();
     await populateSystem();
+    // Fix jobId index immediately so multiple jobId: null are allowed (sparse unique).
+    try {
+      await ensureDownloadQueueJobIdIndex();
+    } catch (e) {
+      console.error('ensureDownloadQueueJobIdIndex:', e.message);
+    }
     console.log("MongoDB Connected");
-    // Run after a delay so we run after Mongoose ensureIndexes; then we force correct jobId index.
-    setTimeout(async () => {
-      try {
-        await ensureDownloadQueueJobIdIndex();
-      } catch (e) {
-        console.error('ensureDownloadQueueJobIdIndex:', e.message);
-      }
-    }, 1500);
 })
 .catch((err)=> (console.log(err)))
 
