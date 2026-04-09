@@ -7,6 +7,39 @@ const MediaModel = require('../model/media.model');
 const { tmdbApi } = require('../helper/api.helper');
 const router = express.Router();
 
+let isBackgroundSyncRunning = false;
+
+function triggerBackgroundSync() {
+    if (isBackgroundSyncRunning) return;
+    const needsMovieSync = shouldSync();
+    const needsTvSync = shouldSyncTv();
+    if (!needsMovieSync && !needsTvSync) return;
+
+    isBackgroundSyncRunning = true;
+    setImmediate(async () => {
+        try {
+            if (needsMovieSync) {
+                await syncNowPlayingMovies();
+                await syncPopularMovies();
+                await syncTopRatedMovies();
+                setLastSync(Date.now());
+            }
+            if (needsTvSync) {
+                await syncOnTheAirTv();
+                await syncPopularTv();
+                await syncTopRatedTv();
+                setLastSyncTv(Date.now());
+            }
+            await syncMovieGenres();
+            await syncTvGenres();
+        } catch (err) {
+            console.error('Background sync failed:', err);
+        } finally {
+            isBackgroundSyncRunning = false;
+        }
+    });
+}
+
 
 
 router.post('/sync', validateToken, validateAdmin, async (req, res) => {
@@ -236,23 +269,8 @@ router.get('/:id', optionalValidateToken, async (req, res) => {
 router.get('/', async (req, res) => {
     const { category } = req.query;
     try {
-        // Once a day: sync movies, TV, and genres when this endpoint is hit
-        if (shouldSync() || shouldSyncTv()) {
-            if (shouldSync()) {
-                await syncNowPlayingMovies();
-                await syncPopularMovies();
-                await syncTopRatedMovies();
-                setLastSync(Date.now());
-            }
-            if (shouldSyncTv()) {
-                await syncOnTheAirTv();
-                await syncPopularTv();
-                await syncTopRatedTv();
-                setLastSyncTv(Date.now());
-            }
-            await syncMovieGenres();
-            await syncTvGenres();
-        }
+        // Fire-and-forget: trigger sync in background so API responds immediately.
+        triggerBackgroundSync();
 
         if (!category) {
             const [top_pick, popular, now_playing, top_rated] = await Promise.all([

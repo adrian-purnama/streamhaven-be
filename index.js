@@ -153,6 +153,7 @@ async function ensureDownloadQueueJobIdIndex() {
   console.log('Created partial unique index downloadqueues.jobId_1 (non-null jobId only)');
 }
 
+console.log("MONGO_URI:", process.env.MONGO_URI);
 mongoose.connect(process.env.MONGODB_URI, {
     dbName : "app",
 })
